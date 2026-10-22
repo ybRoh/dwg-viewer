@@ -5,6 +5,10 @@ import { LibreDwg, Dwg_File_Type } from '../node_modules/@mlightcad/libredwg-web
 import createModule from '../node_modules/@mlightcad/libredwg-web/wasm/libredwg-web.js';
 import { DxfParser } from '@mlightcad/dxf-json';
 import { normalizeDwg, normalizeDxf, buildDrawing, entityProps, versionName, unitName, fmt, TYPE_KO } from './scene.js';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
+import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -788,9 +792,10 @@ function renderProps() {
   if (ids.length > 1) {
     const by = {}; for (const id of ids) { const t = sp.ents[id].type; by[t] = (by[t] || 0) + 1; }
     el.innerHTML = `<dl class="kv"><dt>선택</dt><dd>${ids.length.toLocaleString()}개</dd>${Object.entries(by).map(([k, v]) => `<dt>${esc(TYPE_KO[k] || k)}</dt><dd>${v}</dd>`).join('')}</dl>
-      <div class="pad row-btns"><button type="button" class="btn sm" id="selZoom">선택 객체로 확대</button><button type="button" class="btn sm ghost" id="selDxf">DXF로 내보내기</button></div>`;
+      <div class="pad row-btns"><button type="button" class="btn sm" id="selZoom">선택 객체로 확대</button><button type="button" class="btn sm ghost" id="selDxf">DXF로 내보내기</button><button type="button" class="btn sm ghost" id="sel3d">3D 미리보기</button></div>`;
     $('#selZoom').onclick = () => zoomToEnts(ids);
     $('#selDxf').onclick = exportSelDxf;
+    $('#sel3d').onclick = open3DPreview;
     return;
   }
   const r = sp.ents[ids[0]], e = r.raw, d = S.drawing;
@@ -807,9 +812,10 @@ function renderProps() {
       <dt>핸들</dt><dd class="mono">${esc(r.handle || '-')}</dd>
       ${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd${/^[-\d.,\s/°]+$/.test(String(v)) ? ' class="mono"' : ''}>${esc(v)}</dd>`).join('')}
     </dl>
-    <div class="pad row-btns"><button type="button" class="btn sm" id="selZoom">이 객체로 확대</button><button type="button" class="btn sm ghost" id="selDxf">DXF로 내보내기</button><button type="button" class="btn sm ghost" id="selLayerOff">이 레이어 끄기</button></div>`;
+    <div class="pad row-btns"><button type="button" class="btn sm" id="selZoom">이 객체로 확대</button><button type="button" class="btn sm ghost" id="selDxf">DXF로 내보내기</button><button type="button" class="btn sm ghost" id="sel3d">3D 미리보기</button><button type="button" class="btn sm ghost" id="selLayerOff">이 레이어 끄기</button></div>`;
   $('#selZoom').onclick = () => zoomToEnts(ids);
   $('#selDxf').onclick = exportSelDxf;
+  $('#sel3d').onclick = open3DPreview;
   $('#selLayerOff').onclick = () => { const l = d.layers.get(r.layer); if (l) { l.on = false; computeVis(); renderLayers(); setSel([]); } };
 }
 
@@ -897,6 +903,180 @@ function fallbackCopy(text) {
     return false;
   }
 }
+// ---------- 3D 미리보기 (오프라인, Three.js로 선택 영역을 돌출) ----------
+const V3D = { ready: false, selLines: null, loops: null, group: null, scene: null, camera: null, renderer: null, controls: null, raf: null, name: 'part' };
+function traceClosedLoops(lines) {
+  // lines: flat [x1,y1,x2,y2, x1,y1,x2,y2, ...]
+  const key = (x, y) => Math.round(x * 1e4) + ',' + Math.round(y * 1e4);
+  const segs = [];
+  for (let i = 0; i < lines.length; i += 4) segs.push([[lines[i], lines[i + 1]], [lines[i + 2], lines[i + 3]]]);
+  const byPoint = new Map();
+  segs.forEach(([p1, p2], idx) => {
+    const k1 = key(...p1), k2 = key(...p2);
+    (byPoint.get(k1) || byPoint.set(k1, []).get(k1)).push({ idx, end: 0 });
+    (byPoint.get(k2) || byPoint.set(k2, []).get(k2)).push({ idx, end: 1 });
+  });
+  const used = new Array(segs.length).fill(false);
+  const loops = []; let openCount = 0;
+  for (let start = 0; start < segs.length; start++) {
+    if (used[start]) continue;
+    used[start] = true;
+    const [p0, p1] = segs[start];
+    const chain = [p0, p1];
+    let cur = p1, closed = false, guard = 0;
+    while (guard++ < segs.length + 5) {
+      const cand = (byPoint.get(key(...cur)) || []).find(c => !used[c.idx]);
+      if (!cand) break;
+      used[cand.idx] = true;
+      const seg = segs[cand.idx];
+      const next = cand.end === 0 ? seg[1] : seg[0];
+      chain.push(next); cur = next;
+      if (key(...cur) === key(...chain[0])) { closed = true; break; }
+    }
+    if (closed && chain.length > 3) { chain.pop(); loops.push(chain); }
+    else openCount++;
+  }
+  return { loops, openCount };
+}
+function signedArea(pts) {
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) { const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length]; a += x1 * y2 - x2 * y1; }
+  return a / 2;
+}
+function pointInPoly([px, py], pts) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, yi] = pts[i], [xj, yj] = pts[j];
+    if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+function loopsToShapes(loops) {
+  const polys = loops.map(pts => ({ pts, area: signedArea(pts) }));
+  const n = polys.length;
+  const contains = (i, j) => i !== j && pointInPoly(polys[j].pts[0], polys[i].pts);
+  const depth = polys.map((_, i) => { let c = 0; for (let j = 0; j < n; j++) if (contains(j, i)) c++; return c; });
+  const parent = polys.map((_, i) => {
+    if (depth[i] === 0) return -1;
+    let best = -1, bestArea = Infinity;
+    for (let j = 0; j < n; j++) if (j !== i && depth[j] === depth[i] - 1 && contains(j, i) && Math.abs(polys[j].area) < bestArea) { best = j; bestArea = Math.abs(polys[j].area); }
+    return best;
+  });
+  const shapes = [];
+  for (let i = 0; i < n; i++) {
+    if (depth[i] % 2 !== 0) continue;
+    const shape = new THREE.Shape(polys[i].pts.map(([x, y]) => new THREE.Vector2(x, y)));
+    for (let j = 0; j < n; j++) if (parent[j] === i) shape.holes.push(new THREE.Path(polys[j].pts.map(([x, y]) => new THREE.Vector2(x, y))));
+    shapes.push(shape);
+  }
+  return shapes;
+}
+function buildExtrudeGroup(selLines, thickness) {
+  const { loops, openCount } = traceClosedLoops(selLines);
+  const shapes = loopsToShapes(loops);
+  const group = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: 0x5b8def, metalness: 0.15, roughness: 0.55, side: THREE.DoubleSide });
+  const edgeMat = new THREE.LineBasicMaterial({ color: 0x1b2026, transparent: true, opacity: 0.35 });
+  for (const shape of shapes) {
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false, curveSegments: 1 });
+    geo.computeVertexNormals();
+    const mesh = new THREE.Mesh(geo, mat);
+    group.add(mesh);
+    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 25), edgeMat);
+    group.add(edges);
+  }
+  return { group, loopCount: loops.length, shapeCount: shapes.length, openCount };
+}
+function open3DPreview() {
+  if (!S.sel.size) { toast('내보낼 객체를 먼저 선택하세요'); return; }
+  const sp = S.space, sg = sp.segs, se = sp.segEnt, set = S.sel;
+  const lines = [];
+  for (let i = 0; i < se.length; i++) if (set.has(se[i])) lines.push(sg[i * 4], sg[i * 4 + 1], sg[i * 4 + 2], sg[i * 4 + 3]);
+  if (!lines.length) { toast('선택한 객체에서 선 데이터를 찾을 수 없습니다 (문자·치수 등은 지원하지 않습니다)'); return; }
+  V3D.selLines = lines;
+  V3D.name = (S.drawing?.meta.name.replace(/\.\w+$/, '') || 'part') + '_선택영역';
+  $('#view3d').hidden = false;
+  if (!V3D.ready) init3DRenderer();
+  rebuild3D();
+}
+function init3DRenderer() {
+  const canvas = $('#v3dCanvas');
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x1b2026);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+  const dir = new THREE.DirectionalLight(0xffffff, 1.1); dir.position.set(1, 1.3, 2); scene.add(dir);
+  const dir2 = new THREE.DirectionalLight(0xffffff, 0.4); dir2.position.set(-1.5, -0.6, -1); scene.add(dir2);
+  const grid = new THREE.GridHelper(400, 40, 0x3a4350, 0x2a3138); scene.add(grid);
+  const wrap = canvas.parentElement;
+  const camera = new THREE.PerspectiveCamera(45, wrap.clientWidth / wrap.clientHeight || 1, 0.1, 100000);
+  camera.position.set(80, -140, 160); camera.up.set(0, 0, 1);
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  const group = new THREE.Group(); scene.add(group);
+  V3D.scene = scene; V3D.camera = camera; V3D.renderer = renderer; V3D.controls = controls; V3D.group = group;
+  V3D.ready = true;
+  const resize = () => {
+    const w = wrap.clientWidth || 1, h = wrap.clientHeight || 1;
+    camera.aspect = w / h; camera.updateProjectionMatrix();
+    renderer.setSize(w, h, false);
+  };
+  resize();
+  new ResizeObserver(resize).observe(wrap);
+  const loop = () => { controls.update(); renderer.render(scene, camera); V3D.raf = requestAnimationFrame(loop); };
+  loop();
+}
+function rebuild3D() {
+  if (!V3D.selLines) return;
+  const thickness = Math.max(0.01, Number($('#v3dThick').value) || 20);
+  while (V3D.group.children.length) {
+    const c = V3D.group.children.pop();
+    c.traverse?.(o => o.geometry?.dispose());
+    V3D.group.remove(c);
+  }
+  const { group: built, loopCount, shapeCount, openCount } = buildExtrudeGroup(V3D.selLines, thickness);
+  // center the model and lift it onto the grid
+  const box = new THREE.Box3();
+  built.children.forEach(c => { c.geometry.computeBoundingBox(); box.union(c.geometry.boundingBox); });
+  const center = box.isEmpty() ? new THREE.Vector3() : box.getCenter(new THREE.Vector3());
+  built.position.set(-center.x, -center.y, -box.min.z || 0);
+  V3D.group.add(built);
+  V3D.lastShapeCount = shapeCount;
+  const size = box.isEmpty() ? new THREE.Vector3(100, 100, 100) : box.getSize(new THREE.Vector3());
+  const dist = Math.max(60, Math.hypot(size.x, size.y, size.z) * 1.6);
+  V3D.camera.position.set(dist * 0.5, -dist * 0.85, dist * 0.6);
+  V3D.controls.target.set(0, 0, size.z / 2 || 0);
+  V3D.camera.updateProjectionMatrix();
+  $('#v3dStats').innerHTML = `<div>닫힌 외곽선: ${loopCount}개</div><div>돌출된 솔리드: ${shapeCount}개</div>` + (openCount ? `<div style="color:#e5a33a">닫히지 않은 선: ${openCount}개 (제외됨)</div>` : '') + `<div>크기: ${size.x.toFixed(1)} × ${size.y.toFixed(1)} × ${thickness.toFixed(1)} mm</div>`;
+  if (!shapeCount) toast('닫힌 외곽선을 찾지 못했습니다. 선택 영역에 완전히 닫힌 윤곽선이 포함되도록 다시 선택해보세요');
+}
+function close3DPreview() {
+  $('#view3d').hidden = true;
+}
+$('#v3dClose').onclick = close3DPreview;
+$('#view3d').addEventListener('click', e => { if (e.target.id === 'view3d') close3DPreview(); });
+$('#v3dRebuild').onclick = rebuild3D;
+$('#v3dStl').onclick = () => {
+  if (!V3D.group || !V3D.group.children.length) { toast('먼저 3D 모델을 만들어주세요'); return; }
+  const exporter = new STLExporter();
+  const result = exporter.parse(V3D.group, { binary: false });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([result], { type: 'model/stl' }));
+  a.download = V3D.name + '.stl';
+  a.click();
+  toast('STL 파일로 내보냈습니다');
+};
+$('#v3dObj').onclick = () => {
+  if (!V3D.group || !V3D.group.children.length) { toast('먼저 3D 모델을 만들어주세요'); return; }
+  const exporter = new OBJExporter();
+  const result = exporter.parse(V3D.group);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([result], { type: 'text/plain' }));
+  a.download = V3D.name + '.obj';
+  a.click();
+  toast('OBJ 파일로 내보냈습니다');
+};
 if (IS_LOCAL) $$('.local-only').forEach(el => el.hidden = false);
 
 // ---------- chrome ----------
@@ -962,6 +1142,7 @@ function act(name, arg) {
     case 'keys': $('#keys').hidden = false; $('#keys [data-close]').focus(); break;
     case 'sel-zoom': zoomToEnts([...S.sel]); break;
     case 'sel-dxf': exportSelDxf(); break;
+    case 'sel-3d': open3DPreview(); break;
     case 'sel-clear': setSel([]); break;
     case 'sel-layer-off': { const r = S.space.ents[[...S.sel][0]]; const l = S.drawing.layers.get(r?.layer); if (l) { l.on = false; computeVis(); renderLayers(); setSel([]); } break; }
     case 'area-close': finishArea(); break;
@@ -1042,7 +1223,7 @@ function showCtx(x, y) {
   closeMenus();
   const I = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
   const it = (icon, label, a, arg, key = '', dis = false) => `<button type="button" role="menuitem" data-act="${a}"${arg != null ? ` data-arg="${arg}"` : ''}${dis ? ' disabled' : ''}>${I(icon)}<span>${label}</span>${key ? `<kbd>${key}</kbd>` : '<span></span>'}</button>`;
-  const P = { ext: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>', pan: '<path d="M12 3v18M3 12h18"/>', win: '<rect x="3" y="3" width="12" height="12" rx="1"/><path d="M18.5 18.5L21 21"/>', dist: '<path d="M3 17L17 3l4 4L7 21z"/>', area: '<path d="M4 18L7 5l12 3-2 11z"/>', pt: '<circle cx="12" cy="12" r="3"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>', x: '<path d="M6 6l12 12M18 6L6 18"/>', ok: '<path d="M5 12l5 5 9-10"/>', z: '<circle cx="11" cy="11" r="7"/><path d="M16 16l5 5"/>', off: '<path d="M3 3l18 18"/><path d="M12 3l9 5-9 5-9-5z"/>', snap: '<rect x="8" y="8" width="8" height="8"/>', dxf: '<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 13v5M9 13l3 5M12 13l3 5"/>' };
+  const P = { ext: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>', pan: '<path d="M12 3v18M3 12h18"/>', win: '<rect x="3" y="3" width="12" height="12" rx="1"/><path d="M18.5 18.5L21 21"/>', dist: '<path d="M3 17L17 3l4 4L7 21z"/>', area: '<path d="M4 18L7 5l12 3-2 11z"/>', pt: '<circle cx="12" cy="12" r="3"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>', x: '<path d="M6 6l12 12M18 6L6 18"/>', ok: '<path d="M5 12l5 5 9-10"/>', z: '<circle cx="11" cy="11" r="7"/><path d="M16 16l5 5"/>', off: '<path d="M3 3l18 18"/><path d="M12 3l9 5-9 5-9-5z"/>', snap: '<rect x="8" y="8" width="8" height="8"/>', dxf: '<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 13v5M9 13l3 5M12 13l3 5"/>', cube: '<path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M3 7l9 5 9-5M12 12v10"/>' };
   let h = '';
   if (S.pending.length) {
     h += `<div class="mhead">${S.mode === 'area' ? '면적 측정 중' : '거리 측정 중'}</div>`;
@@ -1050,7 +1231,7 @@ function showCtx(x, y) {
     h += it(P.x, '측정 취소', 'cancel', null, 'Esc') + '<hr>';
   }
   if (S.sel.size) {
-    h += `<div class="mhead">선택 ${S.sel.size}개</div>` + it(P.z, '선택 객체로 확대', 'sel-zoom') + it(P.dxf, 'DXF로 내보내기 (3D 변환용)', 'sel-dxf') + (S.sel.size === 1 ? it(P.off, '이 레이어 끄기', 'sel-layer-off') : '') + it(P.x, '선택 해제', 'sel-clear', null, 'Esc') + '<hr>';
+    h += `<div class="mhead">선택 ${S.sel.size}개</div>` + it(P.z, '선택 객체로 확대', 'sel-zoom') + it(P.dxf, 'DXF로 내보내기 (3D 변환용)', 'sel-dxf') + it(P.cube, '3D 미리보기 (오프라인)', 'sel-3d') + (S.sel.size === 1 ? it(P.off, '이 레이어 끄기', 'sel-layer-off') : '') + it(P.x, '선택 해제', 'sel-clear', null, 'Esc') + '<hr>';
   }
   h += it(P.ext, '전체 보기', 'extents', null, 'F') + it(P.pan, '화면 이동', 'mode', 'pan', 'P') + it(P.win, '창 확대', 'mode', 'zoomwin', 'W') + '<hr>';
   h += it(P.dist, '거리 측정', 'mode', 'dist', 'D') + it(P.area, '면적 측정', 'mode', 'area', 'A') + it(P.pt, '점 좌표', 'mode', 'point', 'I') + '<hr>';

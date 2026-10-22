@@ -1,7 +1,7 @@
 import * as esbuild from 'esbuild';
 import fs from 'fs'; import zlib from 'zlib';
 const r = await esbuild.build({ entryPoints: ['src/app.js'], bundle: true, format: 'esm', minify: true, write: false, platform: 'browser', target: 'es2021', charset: 'ascii', logLevel: 'warning',
-  external: ['module', 'fs', 'path', 'url', 'crypto', 'ws', 'worker_threads'] });
+  external: ['module', 'node:module', 'fs', 'node:fs', 'path', 'node:path', 'url', 'node:url', 'crypto', 'node:crypto', 'ws', 'worker_threads', 'node:worker_threads'] });
 let js = r.outputFiles[0].text;
 const wasm = fs.readFileSync('node_modules/@mlightcad/libredwg-web/wasm/libredwg-web.wasm');
 const b64 = zlib.gzipSync(wasm, { level: 9 }).toString('base64');
