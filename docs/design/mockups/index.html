@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>도면 뷰어 목업</title>
+<style>
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css');
+:root { --bg: #05080f; --fg: #e9eef8; --fg-2: #8d98b0; --line: rgba(255,255,255,.1); --accent: #5b8cff; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.4 'Pretendard Variable', Pretendard, system-ui, sans-serif; display: grid; grid-template-rows: auto 1fr; }
+header { display: flex; align-items: center; gap: 16px; padding: 12px 18px; border-bottom: 1px solid var(--line); }
+header b { font-size: 15px; }
+nav { display: flex; gap: 4px; background: rgba(255,255,255,.05); padding: 4px; border-radius: 12px; }
+nav button { border: 0; background: none; color: var(--fg-2); font: 600 13px inherit; font-family: inherit; padding: 8px 14px; border-radius: 9px; cursor: pointer; }
+nav button[aria-selected="true"] { background: linear-gradient(135deg, #5b8cff, #8b6bff); color: #fff; }
+.hint { margin-left: auto; color: var(--fg-2); font-size: 12.5px; }
+.hint a { color: var(--accent); }
+iframe { width: 100%; height: 100%; border: 0; display: block; }
+</style></head>
+<body>
+<header>
+  <b>도면 뷰어 리디자인 목업</b>
+  <nav id="nav">
+    <button data-src="01-blueprint-dark.html" aria-selected="true">1 · 블루프린트 다크</button>
+    <button data-src="02-paper-light.html" aria-selected="false">2 · 페이퍼 라이트</button>
+    <button data-src="03-welcome.html" aria-selected="false">3 · 시작 화면</button>
+    <button data-src="04-command-palette.html" aria-selected="false">4 · 명령 팔레트</button>
+  </nav>
+  <span class="hint">1번에서 <b>⌘K</b>로 팔레트 열기 · <a id="open" href="01-blueprint-dark.html" target="_blank">새 창에서 보기 ↗</a></span>
+</header>
+<iframe id="view" src="01-blueprint-dark.html" title="목업"></iframe>
+<script>
+const nav = document.getElementById('nav'), view = document.getElementById('view'), open = document.getElementById('open');
+function show(btn) {
+  nav.querySelectorAll('button').forEach(b => b.setAttribute('aria-selected', b === btn));
+  view.src = open.href = btn.dataset.src; view.focus();
+}
+nav.addEventListener('click', e => { const b = e.target.closest('button'); if (b) show(b); });
+addEventListener('keydown', e => { const n = +e.key; if (n >= 1 && n <= 4 && !e.metaKey && !e.ctrlKey) show(nav.children[n - 1]); });
+</script>
+</body></html>

@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>명령 팔레트</title>
+<style>
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+:root { --font: 'Pretendard Variable', Pretendard, system-ui, sans-serif; --mono: 'JetBrains Mono', ui-monospace, monospace; }
+body.dark {
+  --bg: #060a13; --canvas: #080e1c;
+  --grid: rgba(110, 150, 255, .055); --grid2: rgba(110, 150, 255, .11);
+  --glass: rgba(14, 20, 36, .74); --glass-hi: rgba(22, 30, 52, .86);
+  --hover: rgba(255, 255, 255, .05); --stroke: rgba(255, 255, 255, .08); --stroke-2: rgba(255, 255, 255, .14);
+  --fg: #e9eef8; --fg-2: #8d98b0; --fg-3: #5a6580;
+  --accent: #5b8cff; --accent-2: #8b6bff; --accent-soft: rgba(91, 140, 255, .16); --on-accent: #fff;
+  --meas: #ffb547; --ok: #3ddc97; --danger: #ff6b6b;
+  --shadow: 0 12px 40px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .05);
+  color-scheme: dark;
+}
+body.light {
+  --bg: #eef1f6; --canvas: #f7f8fb;
+  --grid: rgba(30, 40, 70, .07); --grid2: rgba(30, 40, 70, .10);
+  --glass: rgba(255, 255, 255, .82); --glass-hi: rgba(255, 255, 255, .95);
+  --hover: rgba(15, 25, 50, .05); --stroke: rgba(15, 25, 50, .09); --stroke-2: rgba(15, 25, 50, .16);
+  --fg: #111827; --fg-2: #5b6474; --fg-3: #98a1b2;
+  --accent: #2f6bff; --accent-2: #7b5cff; --accent-soft: rgba(47, 107, 255, .10); --on-accent: #fff;
+  --meas: #f08c00; --ok: #12a46b; --danger: #e5484d;
+  --shadow: 0 8px 30px rgba(20, 30, 60, .10), 0 1px 2px rgba(20, 30, 60, .06);
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--font); letter-spacing: -.01em; overflow: hidden; -webkit-font-smoothing: antialiased; }
+.ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+.muted { color: var(--fg-2); }
+
+.glass { background: var(--glass); backdrop-filter: blur(22px) saturate(1.5); -webkit-backdrop-filter: blur(22px) saturate(1.5); border: 1px solid var(--stroke); border-radius: 16px; box-shadow: var(--shadow); }
+kbd { font: 500 11px/1 var(--mono); padding: 3px 6px; border-radius: 6px; border: 1px solid var(--stroke-2); background: var(--hover); color: var(--fg-2); }
+
+.canvas { position: absolute; inset: 0; overflow: hidden; background:
+  linear-gradient(var(--grid2) 1px, transparent 1px) -1px -1px / 120px 120px,
+  linear-gradient(90deg, var(--grid2) 1px, transparent 1px) -1px -1px / 120px 120px,
+  linear-gradient(var(--grid) 1px, transparent 1px) -1px -1px / 24px 24px,
+  linear-gradient(90deg, var(--grid) 1px, transparent 1px) -1px -1px / 24px 24px,
+  var(--canvas); }
+body.dark .canvas::before { content: ""; position: absolute; inset: 0; background: radial-gradient(60% 55% at 50% 45%, rgba(80, 120, 255, .10), transparent 70%); pointer-events: none; }
+.plan { position: absolute; }
+.plan svg { width: 100%; height: 100%; overflow: visible; display: block; }
+
+.ibtn { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 11px; color: var(--fg-2); position: relative; }
+.ibtn.on { color: var(--on-accent); background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 45%, transparent), inset 0 1px 0 rgba(255,255,255,.25); }
+.ibtn.hov { background: var(--hover); color: var(--fg); }
+.sep { width: 1px; align-self: stretch; margin: 8px 4px; background: var(--stroke-2); }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 99px; background: var(--hover); border: 1px solid var(--stroke); font-size: 12px; color: var(--fg-2); white-space: nowrap; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 18%, transparent); flex: none; }
+.btn { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 13px; border-radius: 10px; border: 1px solid var(--stroke-2); background: var(--hover); font-weight: 600; font-size: 13px; color: var(--fg); white-space: nowrap; }
+.btn.primary { border: 0; color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 40%, transparent), inset 0 1px 0 rgba(255,255,255,.25); }
+
+/* overlays placed in drawing coords */
+.at { position: fixed; transform: translate(-50%, -50%); pointer-events: none; z-index: 5; }
+.grip { width: 9px; height: 9px; background: var(--accent); border: 1.5px solid #fff; border-radius: 2px; box-shadow: 0 0 10px var(--accent); }
+.xh { position: fixed; background: color-mix(in srgb, var(--fg) 22%, transparent); z-index: 4; }
+.snapbox { width: 16px; height: 16px; border: 2px solid var(--ok); border-radius: 50%; box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 22%, transparent), 0 0 18px var(--ok); }
+.tip { position: fixed; z-index: 6; transform: translate(14px, 14px); display: flex; gap: 8px; align-items: center; padding: 6px 10px; border-radius: 9px; font-size: 12px; background: var(--glass-hi); border: 1px solid var(--stroke-2); box-shadow: var(--shadow); white-space: nowrap; backdrop-filter: blur(12px); }
+.tip b { color: var(--ok); font-weight: 600; }
+.mlabel { position: fixed; transform: translate(-50%, -50%); z-index: 6; padding: 5px 11px; border-radius: 99px; background: var(--meas); color: #1d1300; font: 700 13px/1.2 var(--mono); box-shadow: 0 6px 20px color-mix(in srgb, var(--meas) 45%, transparent); white-space: nowrap; }
+.mlabel small { font: 600 11px var(--font); opacity: .75; margin-right: 4px; }
+
+</style>
+<style>
+.top { position: fixed; top: 14px; left: 14px; right: 14px; display: flex; align-items: center; gap: 10px; z-index: 10; }
+.brand { display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 14px 0 8px; }
+.logo { width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; color: #fff; background: conic-gradient(from 210deg, #5b8cff, #8b6bff, #2ee6c5, #5b8cff); box-shadow: 0 6px 20px rgba(91,140,255,.45), inset 0 1px 0 rgba(255,255,255,.35); }
+.vr { width: 1px; height: 26px; background: var(--stroke-2); }
+.fname { display: grid; gap: 1px; }
+.fname b { font-size: 14px; font-weight: 650; display: flex; align-items: center; gap: 6px; }
+.fname span { font-size: 11.5px; color: var(--fg-2); display: flex; gap: 6px; align-items: center; }
+.fname span i { width: 3px; height: 3px; background: var(--fg-3); border-radius: 50%; display: inline-block; }
+.seg { display: flex; padding: 4px; gap: 2px; height: 44px; }
+.seg button { border: 0; background: none; color: var(--fg-2); font: 600 13px var(--font); padding: 0 14px; border-radius: 10px; display: flex; align-items: center; gap: 7px; }
+.seg button.on { background: var(--hover); color: var(--fg); box-shadow: inset 0 0 0 1px var(--stroke-2); }
+.seg button em { font-style: normal; font-size: 11px; color: var(--fg-3); }
+.grow { flex: 1; }
+.cmdk { height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 8px 0 14px; width: 300px; color: var(--fg-3); font-size: 13px; }
+.cmdk .grow { flex: 1; }
+.tools { display: flex; height: 44px; align-items: center; padding: 0 4px; gap: 2px; }
+.tools .ibtn { width: 36px; height: 36px; }
+
+.side { position: fixed; left: 14px; top: 80px; bottom: 96px; width: 286px; display: flex; flex-direction: column; z-index: 9; overflow: hidden; }
+.tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; padding: 6px; border-bottom: 1px solid var(--stroke); }
+.tabs div { display: grid; justify-items: center; gap: 3px; padding: 8px 0 6px; border-radius: 10px; font-size: 11.5px; color: var(--fg-2); font-weight: 550; }
+.tabs div.on { background: var(--accent-soft); color: var(--fg); }
+.tabs div.on .ic { color: var(--accent); }
+.tabs div sup { font: 600 10px var(--mono); color: var(--fg-3); margin-left: 2px; }
+.search { margin: 12px 12px 6px; height: 36px; border-radius: 10px; background: var(--hover); border: 1px solid var(--stroke); display: flex; align-items: center; gap: 8px; padding: 0 10px; color: var(--fg-3); font-size: 13px; }
+.lhead { display: flex; justify-content: space-between; align-items: center; padding: 8px 16px 4px; font-size: 11px; color: var(--fg-3); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.lhead span:last-child { text-transform: none; letter-spacing: 0; color: var(--accent); font-weight: 600; }
+.rows { padding: 2px 8px; display: grid; gap: 1px; }
+.r { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 8px 0 10px; border-radius: 10px; font-size: 13.5px; }
+.r .nm { flex: 1; font-weight: 520; }
+.r .ct { font: 500 11.5px var(--mono); color: var(--fg-3); min-width: 22px; text-align: right; }
+.r .ey { color: var(--fg-2); display: grid; }
+.r.hov { background: var(--hover); }
+.r.sel { background: var(--accent-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
+.r.off .nm, .r.off .dot, .r.off .ct { opacity: .35; }
+.r.off .ey { color: var(--fg-3); }
+.solo { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 7px; border: 1px solid var(--stroke-2); color: var(--fg-2); }
+.lfoot { margin-top: auto; padding: 12px; border-top: 1px solid var(--stroke); display: flex; gap: 8px; }
+.lfoot .btn { flex: 1; justify-content: center; height: 32px; font-size: 12px; }
+
+.props { position: fixed; right: 14px; top: 80px; width: 312px; z-index: 9; overflow: hidden; }
+.phead { display: flex; align-items: center; gap: 10px; padding: 14px 14px 12px; }
+.ptype { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: color-mix(in srgb, #3fc9f0 16%, transparent); color: #3fc9f0; }
+.phead b { font-size: 15px; display: block; font-weight: 650; }
+.phead small { color: var(--fg-2); font-size: 12px; display: flex; gap: 6px; align-items: center; }
+.phead .x { margin-left: auto; color: var(--fg-3); }
+.metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 12px 12px; }
+.m { padding: 11px 12px; border-radius: 12px; background: var(--hover); border: 1px solid var(--stroke); }
+.m small { font-size: 11px; color: var(--fg-2); display: block; margin-bottom: 3px; font-weight: 550; }
+.m b { font: 600 18px/1.2 var(--mono); letter-spacing: -.02em; }
+.m b u { text-decoration: none; font: 500 11px var(--font); color: var(--fg-3); margin-left: 3px; }
+.m.hero { grid-column: span 2; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 20%, transparent), color-mix(in srgb, var(--accent-2) 12%, transparent)); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+.m.hero b { font-size: 24px; }
+.kv { margin: 0; padding: 4px 16px 10px; display: grid; grid-template-columns: 84px 1fr; row-gap: 9px; font-size: 13px; border-top: 1px solid var(--stroke); padding-top: 12px; }
+.kv dt { color: var(--fg-2); }
+.kv dd { margin: 0; display: flex; align-items: center; gap: 6px; }
+.pact { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--stroke); }
+.pact .btn { flex: 1; justify-content: center; height: 34px; font-size: 12.5px; }
+
+.dock { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 2px; padding: 6px; z-index: 10; border-radius: 18px; }
+.dock .ibtn { width: 44px; height: 44px; border-radius: 12px; }
+.dock .ibtn .k { position: absolute; right: 4px; bottom: 3px; font: 600 8.5px var(--mono); color: var(--fg-3); }
+.dock .ibtn.on .k { color: rgba(255,255,255,.7); }
+.snap { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 12px; border-radius: 12px; font-size: 13px; font-weight: 600; color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.snap .tg { width: 28px; height: 16px; border-radius: 99px; background: var(--ok); position: relative; }
+.snap .tg::after { content: ""; position: absolute; right: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; }
+.ttip { position: absolute; bottom: 60px; left: 50%; transform: translateX(-50%); white-space: nowrap; padding: 6px 10px; border-radius: 9px; background: var(--glass-hi); border: 1px solid var(--stroke-2); font-size: 12px; font-weight: 600; color: var(--fg); display: flex; gap: 8px; align-items: center; box-shadow: var(--shadow); }
+
+.status { position: fixed; left: 14px; bottom: 18px; height: 44px; display: flex; align-items: center; gap: 14px; padding: 0 14px; z-index: 9; font-size: 12.5px; border-radius: 14px; }
+.status .xy { display: flex; gap: 12px; }
+.status .xy span { color: var(--fg-3); margin-right: 5px; }
+.status .xy b { font-weight: 500; }
+.live { display: flex; align-items: center; gap: 7px; color: var(--fg-2); }
+.live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 10px var(--ok); }
+
+.nav { position: fixed; right: 14px; bottom: 18px; z-index: 9; display: grid; gap: 8px; justify-items: end; }
+.mini { width: 220px; height: 150px; position: relative; overflow: hidden; padding: 10px; }
+.mini .plan { inset: 8px; }
+.mini .vp { position: absolute; left: 92px; top: 30px; width: 104px; height: 72px; border: 1.5px solid var(--accent); border-radius: 4px; background: color-mix(in srgb, var(--accent) 12%, transparent); box-shadow: 0 0 0 999px rgba(0,0,0,.28); }
+.zoom { display: flex; align-items: center; height: 40px; padding: 0 4px; gap: 2px; border-radius: 12px; }
+.zoom .ibtn { width: 32px; height: 32px; }
+.zoom b { font: 600 12.5px var(--mono); min-width: 52px; text-align: center; }
+
+/* command palette */
+.scrim { position: fixed; inset: 0; z-index: 40; background: rgba(3, 6, 14, .55); backdrop-filter: blur(6px); }
+.pal { position: fixed; z-index: 41; top: 150px; left: 50%; transform: translateX(-50%); width: 660px; border-radius: 20px; overflow: hidden; background: var(--glass-hi); }
+.pin { display: flex; align-items: center; gap: 12px; padding: 18px 20px; border-bottom: 1px solid var(--stroke); font-size: 17px; }
+.pin .q { flex: 1; }
+.pin .q::after { content: ""; display: inline-block; width: 2px; height: 20px; background: var(--accent); vertical-align: -4px; margin-left: 1px; }
+.pin .scope { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); }
+.pg { padding: 8px; }
+.pg h6 { margin: 8px 12px 6px; font-size: 11px; color: var(--fg-3); letter-spacing: .06em; font-weight: 600; }
+.pi { display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 12px; border-radius: 11px; font-size: 14px; }
+.pi .pic { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: var(--hover); border: 1px solid var(--stroke); color: var(--fg-2); }
+.pi .grow { flex: 1; }
+.pi em { font-style: normal; color: var(--fg-3); font-size: 12.5px; }
+.pi mark { background: none; color: var(--accent); font-weight: 700; }
+.pi.on { background: var(--accent-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
+.pi.on .pic { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; border-color: transparent; }
+.pf { display: flex; gap: 16px; padding: 12px 20px; border-top: 1px solid var(--stroke); font-size: 12px; color: var(--fg-3); }
+.pf span { display: flex; gap: 6px; align-items: center; }
+.pf .grow { flex: 1; }
+</style></head>
+<body class="dark">
+<div class="canvas"><div class="plan" id="plan" style="left:330px;right:340px;top:88px;bottom:96px"></div></div>
+
+<header class="top">
+  <div class="glass brand">
+    <div class="logo"><i data-i="layers" data-s="20"></i></div>
+    <div class="vr"></div>
+    <div class="fname"><b>sample.dxf <i data-i="chev" data-s="14" class="muted"></i></b><span>DXF R2018<i></i>36 객체<i></i>단위 mm<i></i>방금 열림</span></div>
+  </div>
+  <div class="glass seg"><button class="on"><i data-i="grid" data-s="15"></i>모델</button><button>Layout1 <em>비어 있음</em></button></div>
+  <div class="grow"></div>
+  <div class="glass cmdk"><i data-i="search" data-s="16"></i><span class="grow">명령, 레이어, 문자 검색…</span><kbd>⌘</kbd><kbd>K</kbd></div>
+  <div class="glass tools"><div class="ibtn"><i data-i="grid"></i></div><div class="ibtn"><i data-i="sun"></i></div><div class="ibtn"><i data-i="share"></i></div></div>
+  <div class="btn primary" style="height:44px;border-radius:13px;padding:0 16px"><i data-i="folder" data-s="17"></i>열기</div>
+</header>
+
+<aside class="glass side">
+  <div class="tabs">
+    <div class="on"><i data-i="layers"></i><span>레이어<sup>7</sup></span></div>
+    <div><i data-i="blocks"></i><span>블록<sup>22</sup></span></div>
+    <div><i data-i="type"></i><span>문자<sup>6</sup></span></div>
+    <div><i data-i="info"></i><span>정보</span></div>
+  </div>
+  <div class="search"><i data-i="search" data-s="15"></i>레이어 찾기</div>
+  <div class="lhead"><span>레이어 7</span><span>모두 끄기</span></div>
+  <div class="rows">
+    <div class="r off"><span class="dot" style="--c:#cfd6e4"></span><span class="nm">0</span><span class="ct">0</span><span class="ey"><i data-i="eyeoff" data-s="16"></i></span></div>
+    <div class="r"><span class="dot" style="--c:#9a7dff"></span><span class="nm">AXIS</span><span class="ct">14</span><span class="ey"><i data-i="eye" data-s="16"></i></span></div>
+    <div class="r"><span class="dot" style="--c:#e66bff"></span><span class="nm">CENTER</span><span class="ct">2</span><span class="ey"><i data-i="eye" data-s="16"></i></span></div>
+    <div class="r hov"><span class="dot" style="--c:#ff7d7d"></span><span class="nm">DIM</span><span class="solo">단독</span><span class="ct">4</span><span class="ey"><i data-i="eye" data-s="16"></i></span></div>
+    <div class="r"><span class="dot" style="--c:#43e39c"></span><span class="nm">DOOR</span><span class="ct">4</span><span class="ey"><i data-i="eye" data-s="16"></i></span></div>
+    <div class="r sel"><span class="dot" style="--c:#3fc9f0"></span><span class="nm">FURN</span><span class="ct">21</span><span class="ey"><i data-i="eye" data-s="16"></i></span></div>
+    <div class="r"><span class="dot" style="--c:#ffd45c"></span><span class="nm">TEXT</span><span class="ct">6</span><span class="ey"><i data-i="eye" data-s="16"></i></span></div>
+    <div class="r"><span class="dot" style="--c:#e3eaf7"></span><span class="nm">WALL</span><span class="ct">12</span><span class="ey"><i data-i="eye" data-s="16"></i></span></div>
+  </div>
+  <div class="lfoot"><div class="btn"><i data-i="eye" data-s="15"></i>모두 켜기</div><div class="btn"><i data-i="sliders" data-s="15"></i>흑백 보기</div></div>
+</aside>
+
+<aside class="glass props">
+  <div class="phead"><div class="ptype"><i data-i="circle"></i></div><div><b>원 <span class="muted mono" style="font-size:12px;font-weight:500">CIRCLE</span></b><small><span class="dot" style="--c:#3fc9f0;width:7px;height:7px"></span>FURN · 핸들 CC</small></div><span class="x"><i data-i="x" data-s="16"></i></span></div>
+  <div class="metrics">
+    <div class="m hero"><small>면적</small><b>2,010,619.3<u>mm²</u></b></div>
+    <div class="m"><small>반지름</small><b>800<u>mm</u></b></div>
+    <div class="m"><small>지름</small><b>1,600<u>mm</u></b></div>
+    <div class="m" style="grid-column:span 2"><small>둘레</small><b>5,026.55<u>mm</u></b></div>
+  </div>
+  <dl class="kv">
+    <dt>중심</dt><dd class="mono">10,000.00, 6,000.00</dd>
+    <dt>색상</dt><dd><span class="dot" style="--c:#3fc9f0;width:8px;height:8px"></span>ByLayer (4)</dd>
+    <dt>선종류</dt><dd>ByLayer · Continuous</dd>
+    <dt>선가중치</dt><dd>기본값</dd>
+  </dl>
+  <div class="pact"><div class="btn"><i data-i="focus" data-s="15"></i>객체로 확대</div><div class="btn"><i data-i="copy" data-s="15"></i>값 복사</div></div>
+</aside>
+
+<div class="glass dock">
+  <div class="ibtn on"><i data-i="select"></i><span class="k">V</span></div>
+  <div class="ibtn"><i data-i="hand"></i><span class="k">H</span></div>
+  <div class="ibtn"><i data-i="zoomwin"></i><span class="k">W</span></div>
+  <div class="sep"></div>
+  <div class="ibtn hov"><i data-i="ruler"></i><span class="k">D</span><div class="ttip">거리 측정 <kbd>D</kbd></div></div>
+  <div class="ibtn"><i data-i="area"></i><span class="k">A</span></div>
+  <div class="ibtn"><i data-i="point"></i><span class="k">I</span></div>
+  <div class="sep"></div>
+  <div class="snap"><i data-i="magnet" data-s="16"></i>스냅<span class="tg"></span></div>
+  <div class="sep"></div>
+  <div class="ibtn"><i data-i="fit"></i><span class="k">F</span></div>
+</div>
+
+<div class="glass status"><span class="live">사분점 스냅</span><div class="xy mono"><b><span>X</span>10,000.00</b><b><span>Y</span>6,800.00</b></div><span class="muted">mm</span></div>
+
+<div class="nav">
+  <div class="glass mini"><div class="plan" id="mini"></div><div class="vp"></div></div>
+  <div class="glass zoom"><div class="ibtn"><i data-i="minus" data-s="16"></i></div><b>128%</b><div class="ibtn"><i data-i="plus" data-s="16"></i></div><div class="sep" style="margin:8px 2px"></div><div class="ibtn"><i data-i="fit" data-s="16"></i></div></div>
+</div>
+
+<!-- drawing-space overlays -->
+<div class="at grip" data-at="10000,6000"></div>
+<div class="at grip" data-at="10800,6000"></div>
+<div class="at grip" data-at="9200,6000"></div>
+<div class="at grip" data-at="10000,5200"></div>
+<div class="at snapbox" data-at="10000,6800" data-xh="10000,6800,0,0,0,0"></div>
+<div class="tip" data-at="10000,6800"><b>◆ 사분점</b><span class="mono muted">10,000 · 6,800</span></div>
+
+<template id="palette">
+  <div class="scrim"></div>
+  <div class="glass pal">
+    <div class="pin"><i data-i="search" data-s="20" class="muted"></i><span class="q">레이어 끄</span><span class="scope">모든 항목</span></div>
+    <div class="pg">
+      <h6>명령</h6>
+      <div class="pi on"><span class="pic"><i data-i="eyeoff" data-s="16"></i></span><span class="grow"><mark>레이어 끄</mark>기 — 선택한 객체의 레이어</span><kbd>↵</kbd></div>
+      <div class="pi"><span class="pic"><i data-i="layers" data-s="16"></i></span><span class="grow">모든 <mark>레이어 끄</mark>기</span><em>레이어</em></div>
+      <div class="pi"><span class="pic"><i data-i="focus" data-s="16"></i></span><span class="grow"><mark>레이어</mark> 단독 보기</span><kbd>⇧</kbd><kbd>L</kbd></div>
+      <h6>레이어</h6>
+      <div class="pi"><span class="pic"><span class="dot" style="--c:#ff7d7d"></span></span><span class="grow">DIM</span><em>치수 · 4개 객체</em></div>
+      <div class="pi"><span class="pic"><span class="dot" style="--c:#43e39c"></span></span><span class="grow">DOOR</span><em>4개 객체</em></div>
+      <h6>최근 사용</h6>
+      <div class="pi"><span class="pic"><i data-i="table" data-s="16"></i></span><span class="grow">블록 집계표를 엑셀로 복사</span><kbd>⌘</kbd><kbd>⇧</kbd><kbd>C</kbd></div>
+      <div class="pi"><span class="pic"><i data-i="image" data-s="16"></i></span><span class="grow">현재 화면을 PNG로 저장</span><em>내보내기</em></div>
+    </div>
+    <div class="pf"><span><kbd>↑</kbd><kbd>↓</kbd> 이동</span><span><kbd>↵</kbd> 실행</span><span><kbd>Tab</kbd> 범위 바꾸기</span><span class="grow"></span><span><kbd>esc</kbd> 닫기</span></div>
+  </div>
+</template>
+
+<script>
+// Draws the sample floor plan (same geometry as sample.dxf) as SVG, and places [data-at] overlays in drawing coords.
+const IC = {
+  select: '<path d="M5 3l14 8-6 2-2 6z"/>',
+  hand: '<path d="M18 11V6a2 2 0 0 0-4 0v5"/><path d="M14 10V4a2 2 0 0 0-4 0v6"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>',
+  zoomwin: '<rect x="3" y="3" width="12" height="12" rx="1" stroke-dasharray="3 2"/><circle cx="15.5" cy="15.5" r="4"/><path d="M18.5 18.5L21 21"/>',
+  ruler: '<path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>',
+  area: '<path d="M4 18L7 5l12 3-2 11z"/>',
+  point: '<circle cx="12" cy="12" r="3"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>',
+  magnet: '<path d="M6 15l-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 22l-4-4 6.39-6.36a2.14 2.14 0 0 0-3-3z"/><path d="M5 8l4 4M12 15l4 4"/>',
+  fit: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+  layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
+  blocks: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/>',
+  type: '<path d="M5 6V4h14v2M12 4v16M9 20h6"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M16 16l5 5"/>',
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  eyeoff: '<path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>', minus: '<path d="M5 12h14"/>',
+  moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  download: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',
+  upload: '<path d="M12 16V4M7 9l5-5 5 5M5 20h14"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
+  lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+  chev: '<path d="M7 10l5 5 5-5"/>', chevr: '<path d="M10 7l5 5-5 5"/>',
+  more: '<path d="M5 12h.01M12 12h.01M19 12h.01"/>',
+  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
+  x: '<path d="M6 6l12 12M18 6L6 18"/>',
+  grid: '<path d="M3 9h18M3 15h18M9 3v18M15 3v18"/><rect x="3" y="3" width="18" height="18" rx="2"/>',
+  focus: '<circle cx="12" cy="12" r="3"/><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/>',
+  circle: '<circle cx="12" cy="12" r="8"/><path d="M12 12h8"/>',
+  share: '<path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7M16 6l-4-4-4 4M12 2v13"/>',
+  image: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/>',
+  table: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 10v10"/>',
+  cmd: '<path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/>',
+  menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+  sliders: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
+  check: '<path d="M5 12l5 5 9-10"/>',
+  compass: '<path d="M12 3v3M12 6l-6 15M12 6l6 15M8 15h8"/><circle cx="12" cy="6" r="1.5"/>',
+};
+function icons(root = document) {
+  root.querySelectorAll('i[data-i]').forEach(e => {
+    const s = e.dataset.s ? ` style="width:${e.dataset.s}px;height:${e.dataset.s}px"` : '';
+    e.outerHTML = `<svg class="ic ${e.className}"${s} viewBox="0 0 24 24" aria-hidden="true">${IC[e.dataset.i] || ''}</svg>`;
+  });
+}
+
+const THEMES = {
+  dark: { bg: '#080e1c', wall: '#e3eaf7', poche: 'rgba(200,215,255,.13)', door: '#43e39c', furn: '#3fc9f0', text: '#ffd45c', sub: '#9aa7c2', dim: '#ff7d7d', axis: '#9a7dff', center: '#e66bff', win: '#7fb2ff' },
+  light: { bg: '#f7f8fb', wall: '#18202e', poche: 'rgba(24,32,46,.10)', door: '#0f9a60', furn: '#0b86ad', text: '#9a6400', sub: '#6b7486', dim: '#d64545', axis: '#7356dc', center: '#b23cc9', win: '#2f6fe0' },
+};
+
+function planSVG(o = {}) {
+  const T = Object.assign({}, THEMES[o.theme || 'dark'], o.colors || {});
+  const F = '-1'; // y flip helper
+  const ln = (a, b, c, d, col, ex = '') => `<line x1="${a}" y1="${-b}" x2="${c}" y2="${-d}" stroke="${col}" ${ex}/>`;
+  const rc = (x, y, w, h, col, ex = '') => `<rect x="${x}" y="${-(y + h)}" width="${w}" height="${h}" stroke="${col}" fill="none" ${ex}/>`;
+  const ci = (x, y, r, col, ex = '') => `<circle cx="${x}" cy="${-y}" r="${r}" stroke="${col}" fill="none" ${ex}/>`;
+  const tx = (s, x, y, h, col, ex = '') => `<text x="${x}" y="${-y}" font-size="${h}" fill="${col}" stroke="none" ${ex}>${s}</text>`;
+  const poly = (pts, col, ex = '') => `<path d="M${pts.map(p => p[0] + ' ' + (-p[1])).join('L')}Z" stroke="${col}" ${ex}/>`;
+  const pl = (pts, col, ex = '') => `<polyline points="${pts.map(p => p[0] + ',' + (-p[1])).join(' ')}" stroke="${col}" fill="none" ${ex}/>`;
+
+  let axes = '', walls = '', doors = '', furn = '', text = '', dims = '';
+  const dash = 'stroke-dasharray="14 5 2 5"';
+  [0, 4000, 8000, 12000].forEach((x, i) => { axes += ln(x, -1500, x, 8900, T.axis, `${dash} opacity=".5"`) + ci(x, 9350, 360, T.axis) + tx(i + 1, x, 9350 - 120, 330, T.axis, 'text-anchor="middle" font-weight="600"'); });
+  [0, 4000, 8000].forEach((y, i) => { axes += ln(-1500, y, 12900, y, T.axis, `${dash} opacity=".5"`) + ci(-1900, y, 360, T.axis) + tx('ABC'[i], -1900, y - 120, 330, T.axis, 'text-anchor="middle" font-weight="600"'); });
+
+  // outer wall ring with entrance gap at x 1500..2400
+  const ring = [[1500, 0], [0, 0], [0, 8000], [12000, 8000], [12000, 0], [2400, 0], [2400, 200], [11800, 200], [11800, 7800], [200, 7800], [200, 200], [1500, 200]];
+  walls += poly(ring, T.wall, `fill="${T.poche}"`);
+  // interior walls (150 thick) with door gaps
+  const iw = [[200, 1000], [1900, 3925], [4075, 5000], [5900, 7925], [8075, 9000], [9900, 11800]];
+  iw.forEach(([a, b]) => { walls += `<rect x="${a}" y="${-4075}" width="${b - a}" height="150" fill="${T.poche}" stroke="${T.wall}"/>`; });
+  [3925, 8000 - 75].forEach(x => {
+    walls += `<rect x="${x}" y="${-3925}" width="150" height="3725" fill="${T.poche}" stroke="${T.wall}"/>`;
+    walls += `<rect x="${x}" y="${-7800}" width="150" height="3725" fill="${T.poche}" stroke="${T.wall}"/>`;
+  });
+  // windows on top wall
+  [[1200, 2800], [5200, 6800], [9200, 10800]].forEach(([a, b]) => {
+    walls += `<rect x="${a}" y="${-8000}" width="${b - a}" height="200" fill="${T.bg}" stroke="${T.win}"/>` + ln(a, 7900, b, 7900, T.win);
+  });
+  // doors
+  [[1000, 4075], [5000, 4075], [9000, 4075], [1500, 0]].forEach(([x, y]) => {
+    doors += ln(x, y, x, y + 900, T.door) + `<path d="M${x + 900} ${-y} A900 900 0 0 0 ${x} ${-(y + 900)}" stroke="${T.door}" fill="none" stroke-dasharray="40 30"/>`;
+  });
+  // furniture
+  for (let i = 0; i < 6; i++) for (let j = 0; j < 3; j++) {
+    const x = 4500 + i * 550, y = 800 + j * 900;
+    furn += rc(x, y, 450, 450, T.furn) + ln(x, y + 400, x + 450, y + 400, T.furn);
+  }
+  furn += `<g id="c1">${ci(2000, 6000, 600, T.furn)}</g>` + ln(2000, 5000, 2000, 7000, T.center, 'stroke-dasharray="120 40 20 40"') + ln(1000, 6000, 3000, 6000, T.center, 'stroke-dasharray="120 40 20 40"');
+  furn += rc(5000, 6000, 2000, 900, T.furn, 'rx="60"') + rc(5100, 6100, 1800, 700, T.furn, 'rx="40" opacity=".5"');
+  // rooms
+  const room = (n, a, x, y) => tx(n, x, y, 330, T.text, 'text-anchor="middle" font-weight="600"') + tx(a, x, y - 420, 210, T.sub, 'text-anchor="middle"');
+  text += room('회의실 A', '13.87 m²', 2060, 2150) + room('사무실 101', '13.87 m²', 6000, 5200) + room('창고', '13.87 m²', 9940, 2150);
+  text += tx('평면도', 6000 - 900, -1900, 380, T.wall, 'text-anchor="middle" font-weight="700"') + tx('S = 1 : 100', 6000 + 500, -1900, 300, T.sub, 'text-anchor="middle"');
+  text += ln(4200, -2050, 7800, -2050, T.wall, 'opacity=".6"');
+  // dims (architectural ticks)
+  const tick = (x, y) => ln(x - 90, y - 90, x + 90, y + 90, T.dim);
+  const hd = (xs, y, label) => { let s = ln(xs[0] - 200, y, xs[xs.length - 1] + 200, y, T.dim); xs.forEach(x => { s += ln(x, -120, x, y - 150, T.dim, 'opacity=".55"') + tick(x, y); }); for (let k = 0; k < xs.length - 1; k++) s += tx(label(xs[k + 1] - xs[k]), (xs[k] + xs[k + 1]) / 2, y + 90, 210, T.dim, 'text-anchor="middle" class="mono"'); return s; };
+  const vd = (ys, x, label) => { let s = ln(x, ys[0] - 200, x, ys[ys.length - 1] + 200, T.dim); ys.forEach(y => { s += ln(-120, y, x - 150, y, T.dim, 'opacity=".55"') + ln(x - 90, y - 90, x + 90, y + 90, T.dim); }); for (let k = 0; k < ys.length - 1; k++) { const cy = (ys[k] + ys[k + 1]) / 2; s += `<text x="${x - 90}" y="${-cy}" font-size="210" fill="${T.dim}" text-anchor="middle" class="mono" transform="rotate(-90 ${x - 90} ${-cy})">${label(ys[k + 1] - ys[k])}</text>`; } return s; };
+  const f = v => v.toLocaleString('en-US');
+  dims += hd([0, 4000, 8000, 12000], -600, f) + hd([0, 12000], -1100, f);
+  dims += vd([0, 4000, 8000], -600, f) + vd([0, 8000], -1100, f);
+
+  let measure = '';
+  if (o.meas) {
+    const [[x1, y1], [x2, y2]] = o.meas;
+    measure += ln(x1, y1, x2, y2, T.meas || 'var(--meas)', 'stroke-width="2px" style="stroke:var(--meas);stroke-width:2px"') +
+      ci(x1, y1, 70, '', 'style="stroke:var(--meas);fill:var(--meas)"') + ci(x2, y2, 70, '', 'style="stroke:var(--meas);fill:var(--meas)"');
+  }
+  if (o.area) {
+    measure += poly(o.area, '', 'style="stroke:var(--meas);stroke-width:2px;fill:color-mix(in srgb, var(--meas) 16%, transparent)" stroke-dasharray="none"');
+    o.area.forEach(p => { measure += `<rect x="${p[0] - 70}" y="${-p[1] - 70}" width="140" height="140" style="fill:var(--meas);stroke:none"/>`; });
+  }
+  if (o.areaLive) {
+    measure += poly(o.areaLive, '', 'style="stroke:none;fill:color-mix(in srgb, var(--meas) 10%, transparent)"');
+    measure += pl(o.areaLive.slice(0, -1), '', 'style="stroke:var(--meas);stroke-width:2px"');
+    measure += pl(o.areaLive.slice(-2).concat([o.areaLive[0]]), '', 'style="stroke:var(--meas);stroke-width:1.6px" stroke-dasharray="6 5"');
+    o.areaLive.slice(0, -1).forEach(p => { measure += `<rect x="${p[0] - 70}" y="${-p[1] - 70}" width="140" height="140" style="fill:var(--meas);stroke:none"/>`; });
+  }
+
+  let sel = '';
+  if (o.sel === 'c2') sel = `<g class="selg">${ci(10000, 6000, 800, '#fff')}</g>`;
+  const others = `<g class="${o.dim ? 'dimmed' : ''}">${axes}${walls}${doors}${furn}${o.sel === 'c2' ? '' : ci(10000, 6000, 800, T.furn)}${text}${dims}</g>`;
+  const vb = o.vb || '-2500 -9950 15800 12300';
+  return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+<style>*{vector-effect:non-scaling-stroke;stroke-width:${o.sw || 1.15}px} text{font-family:'Pretendard Variable',Pretendard,sans-serif} .mono{font-family:'JetBrains Mono',monospace;font-weight:500}
+.dimmed{opacity:.38} .selg circle{stroke:${o.selColor || '#7fb0ff'};stroke-width:2.2px;filter:drop-shadow(0 0 6px ${o.selColor || '#5b8cff'}) drop-shadow(0 0 16px ${o.selColor || '#5b8cff'})}</style>
+<g id="world">${others}${sel}${measure}</g></svg>`;
+}
+
+function drawPlan(host, o) {
+  host.innerHTML = planSVG(o);
+  return host.querySelector('svg');
+}
+function placeOverlays(svg) {
+  document.querySelectorAll('.xh').forEach(e => e.remove());
+  const g = svg.querySelector('#world');
+  const m = g.getScreenCTM();
+  const toS = (x, y) => { const p = svg.createSVGPoint(); p.x = x; p.y = -y; return p.matrixTransform(m); };
+  document.querySelectorAll('[data-at]').forEach(e => { const [x, y] = e.dataset.at.split(',').map(Number); const p = toS(x, y); e.style.left = p.x + 'px'; e.style.top = p.y + 'px'; });
+  document.querySelectorAll('[data-xh]').forEach(e => {
+    const [x, y, l, t, r, b] = e.dataset.xh.split(',').map(Number); const p = toS(x, y);
+    const h = document.createElement('div'); h.className = 'xh'; Object.assign(h.style, { left: l + 'px', right: r + 'px', top: p.y + 'px', height: '1px' });
+    const v = document.createElement('div'); v.className = 'xh'; Object.assign(v.style, { top: t + 'px', bottom: b + 'px', left: p.x + 'px', width: '1px' });
+    e.after(h, v);
+  });
+}
+
+function autoPlace(svg) {
+  const run = () => placeOverlays(svg);
+  document.fonts.ready.then(run); addEventListener('resize', run); setTimeout(run, 300); setTimeout(run, 1500);
+}
+
+</script>
+<script>
+if (location.hash === '#palette') document.body.append(document.getElementById('palette').content.cloneNode(true));
+icons();
+const svg = drawPlan(document.getElementById('plan'), { theme: 'dark', sel: 'c2', dim: true });
+drawPlan(document.getElementById('mini'), { theme: 'dark', sw: .8 });
+autoPlace(svg);
+
+addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); togglePal(); }
+  if (e.key === 'Escape') closePal();
+});
+function closePal() { document.querySelectorAll('.scrim,.pal').forEach(n => n.remove()); }
+function togglePal(force) {
+  if (document.querySelector('.pal')) return closePal();
+  document.body.append(document.getElementById('palette').content.cloneNode(true)); icons();
+  document.querySelector('.scrim').onclick = closePal;
+}
+document.querySelector('.cmdk').style.cursor = 'pointer';
+document.querySelector('.cmdk').onclick = () => togglePal();
+
+if (!document.querySelector('.pal')) togglePal();
+</script>
+</body></html>
