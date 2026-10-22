@@ -356,6 +356,14 @@ function drawOverlay(sp) {
     ctx.globalAlpha = 1; ctx.strokeStyle = C.sel; ctx.lineWidth = 1; ctx.setLineDash([5, 3]);
     ctx.strokeRect(Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1])); ctx.setLineDash([]);
   }
+  // selection box (window/crossing)
+  if (S.boxRect) {
+    const [a, b] = S.boxRect, crossing = b[0] < a[0], c = crossing ? '#2ecc71' : '#3b82f6';
+    const x = Math.min(a[0], b[0]), y = Math.min(a[1], b[1]), w = Math.abs(b[0] - a[0]), h = Math.abs(b[1] - a[1]);
+    ctx.fillStyle = c; ctx.globalAlpha = 0.12; ctx.fillRect(x, y, w, h);
+    ctx.globalAlpha = 1; ctx.strokeStyle = c; ctx.lineWidth = 1; if (crossing) ctx.setLineDash([5, 3]);
+    ctx.strokeRect(x, y, w, h); ctx.setLineDash([]);
+  }
 }
 
 function label(text, x, y) {
@@ -451,6 +459,28 @@ function pick(sx, sy) {
   }
   return null;
 }
+function boxSelect(x0, y0, x1, y1) {
+  const sp = S.space; if (!sp) return [];
+  const [a0, a1] = toWorld(x0, y0), [b0, b1] = toWorld(x1, y1), vis = S.visLp;
+  const minX = Math.min(a0, b0), maxX = Math.max(a0, b0), minY = Math.min(a1, b1), maxY = Math.max(a1, b1);
+  const crossing = x1 < x0; // AutoCAD convention: drag right-to-left touches, left-to-right must fully enclose
+  const sg = sp.segs, se = sp.segEnt, slp = sp.segLp, bb = new Map();
+  for (let i = 0; i < se.length; i++) {
+    if (!vis[slp[i]]) continue;
+    const ent = se[i], x1s = sg[i * 4], y1s = sg[i * 4 + 1], x2s = sg[i * 4 + 2], y2s = sg[i * 4 + 3];
+    const lo = Math.min(x1s, x2s), hi = Math.max(x1s, x2s), lo2 = Math.min(y1s, y2s), hi2 = Math.max(y1s, y2s);
+    let b = bb.get(ent);
+    if (!b) bb.set(ent, [lo, lo2, hi, hi2]);
+    else { if (lo < b[0]) b[0] = lo; if (lo2 < b[1]) b[1] = lo2; if (hi > b[2]) b[2] = hi; if (hi2 > b[3]) b[3] = hi2; }
+  }
+  const ids = [];
+  for (const [ent, b] of bb) {
+    const hit = crossing ? (b[0] <= maxX && b[2] >= minX && b[1] <= maxY && b[3] >= minY)
+      : (b[0] >= minX && b[2] <= maxX && b[1] >= minY && b[3] <= maxY);
+    if (hit) ids.push(ent);
+  }
+  return ids;
+}
 const SNAP_BIAS = [0, 3, 1, 4, 5];
 function findSnap(sx, sy) {
   const sp = S.space; if (!sp || !S.snapOn) return null;
@@ -482,6 +512,7 @@ canvas.addEventListener('pointerdown', e => {
   if (S.ptrs.size === 2) { const [a, b] = [...S.ptrs.values()]; S.drag = { pinch: true, d0: Math.hypot(a.x - b.x, a.y - b.y), s0: S.view.s, mid: [(a.x + b.x) / 2, (a.y + b.y) / 2], c0: [S.view.cx, S.view.cy] }; return; }
   S.drag = { x0: x, y0: y, cx: S.view.cx, cy: S.view.cy, btn: e.button, moved: false, pan: e.button === 1 || e.button === 2 || S.mode === 'pan' || (e.pointerType === 'touch' && !['dist', 'area'].includes(S.mode)) };
   if (S.mode === 'zoomwin' && e.button === 0) S.drag.zoom = true;
+  if (S.mode === 'select' && e.button === 0 && e.pointerType !== 'touch') S.drag.box = true;
 });
 canvas.addEventListener('pointermove', e => {
   const r = canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
@@ -499,7 +530,8 @@ canvas.addEventListener('pointermove', e => {
   if (d && !d.pinch) {
     if (Math.hypot(x - d.x0, y - d.y0) > 4) d.moved = true;
     if (d.zoom) { S.zoomRect = [[d.x0, d.y0], [x, y]]; redraw(); return; }
-    if (d.moved && (d.pan || (S.mode === 'select' && d.btn === 0))) {
+    if (d.box) { S.boxRect = [[d.x0, d.y0], [x, y]]; redraw(); return; }
+    if (d.moved && d.pan) {
       d.panning = true;
       S.view.cx = d.cx - (x - d.x0) / S.view.s; S.view.cy = d.cy + (y - d.y0) / S.view.s;
       canvas.style.cursor = 'grabbing'; redraw(); return;
@@ -523,6 +555,15 @@ canvas.addEventListener('pointerup', e => {
     S.zoomRect = null;
     if (d.moved) { const [a0, a1] = toWorld(d.x0, d.y0), [b0, b1] = toWorld(x, y); zoomBox([Math.min(a0, b0), Math.min(a1, b1), Math.max(a0, b0), Math.max(a1, b1)], 0); setMode('select'); }
     redraw(); return;
+  }
+  if (d.box) {
+    S.boxRect = null;
+    if (d.moved) {
+      const ids = boxSelect(d.x0, d.y0, x, y);
+      if (e.shiftKey || e.ctrlKey || e.metaKey) { const s = new Set(S.sel); for (const id of ids) s.add(id); setSel(s); }
+      else setSel(ids);
+      redraw(); return;
+    }
   }
   if (d.moved) return;
   if (d.btn === 2) { if (S.mode === 'area' && S.pending.length >= 3) finishArea(); else showCtx(e.clientX, e.clientY); return; }
@@ -580,7 +621,7 @@ function setMode(m) {
   $$('[data-mode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === m));
   canvas.dataset.mode = m;
   const hints = {
-    select: '클릭: 객체 선택 · 드래그: 이동 · 휠: 확대/축소 · Shift+클릭: 추가 선택',
+    select: '클릭: 객체 선택 · 드래그: 영역 선택(→크게 감싸기, ←닿으면 선택) · 휠: 확대/축소 · Shift+드래그: 추가 선택 · 가운데/오른쪽 버튼: 화면 이동',
     pan: '드래그해서 화면을 이동합니다',
     zoomwin: '확대할 영역을 드래그하세요',
     dist: '두 점을 클릭하세요 · 끝점·중심·중간점에 자동으로 붙습니다 (S로 스냅 켜기/끄기)',
