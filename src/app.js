@@ -18,7 +18,7 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 const store = { get(k, d) { try { const v = localStorage.getItem('dwgv.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } }, set(k, v) { try { localStorage.setItem('dwgv.' + k, JSON.stringify(v)); } catch { } } };
 const IS_LOCAL = location.protocol === 'file:';
 // ---- release info (edit these two lines before distributing) ----
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.5.0';
 const AUTHOR = '아라곤';
 const SOURCE_NOTE = '소스 코드는 이 파일과 함께 배포되는 "도면뷰어_소스" 압축 파일에 들어 있습니다. 받지 못했다면 배포한 곳에 요청하세요.';
 
