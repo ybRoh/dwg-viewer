@@ -18,7 +18,7 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 const store = { get(k, d) { try { const v = localStorage.getItem('dwgv.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } }, set(k, v) { try { localStorage.setItem('dwgv.' + k, JSON.stringify(v)); } catch { } } };
 const IS_LOCAL = location.protocol === 'file:';
 // ---- release info (edit these two lines before distributing) ----
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 const AUTHOR = '아라곤';
 const SOURCE_NOTE = '소스 코드는 이 파일과 함께 배포되는 "도면뷰어_소스" 압축 파일에 들어 있습니다. 받지 못했다면 배포한 곳에 요청하세요.';
 
@@ -567,11 +567,12 @@ canvas.addEventListener('pointerup', e => {
     if (d.moved) {
       const ids = boxSelect(d.x0, d.y0, x, y);
       if (MV.active) { mvCapture(ids); redraw(); return; }
+      if (REV.active) { revCapture(ids); redraw(); return; }
       if (e.shiftKey || e.ctrlKey || e.metaKey) { const s = new Set(S.sel); for (const id of ids) s.add(id); setSel(s); }
       else setSel(ids);
       redraw(); return;
     }
-    if (MV.active) return;
+    if (MV.active || REV.active) return;
   }
   if (d.moved) return;
   if (d.btn === 2) { if (S.mode === 'area' && S.pending.length >= 3) finishArea(); else showCtx(e.clientX, e.clientY); return; }
@@ -997,11 +998,12 @@ function open3DPreview() {
   const lines = [];
   for (let i = 0; i < se.length; i++) if (set.has(se[i])) lines.push(sg[i * 4], sg[i * 4 + 1], sg[i * 4 + 2], sg[i * 4 + 3]);
   if (!lines.length) { toast('선택한 객체에서 선 데이터를 찾을 수 없습니다 (문자·치수 등은 지원하지 않습니다)'); return; }
-  V3D.mv = null;
+  V3D.mv = null; V3D.rev = null;
   V3D.selLines = lines;
   V3D.name = (S.drawing?.meta.name.replace(/\.\w+$/, '') || 'part') + '_선택영역';
   $('#v3dThickWrap').hidden = false;
   $('#v3dFlipWrap').hidden = true;
+  $('#v3dRevWrap').hidden = true;
   $('#view3d').hidden = false;
   if (!V3D.ready) init3DRenderer();
   startLoop();
@@ -1045,15 +1047,109 @@ function mvCapture(ids) {
   if (MV.step >= MV_STEPS.length) { mvFinish(); return; }
   mvShowStep();
 }
-function mvCancel() { MV.active = false; mvHideBar(); }
+function mvCancel() { MV.active = false; REV.active = false; mvHideBar(); }
+// ---------- 회전체(샤프트 등 축대칭 부품) 모델링: 중심축 기준 360° 회전(선반 가공) ----------
+const REV = { active: false };
+function startRevolveCapture() {
+  if (!S.space) { toast('도면을 먼저 여세요'); return; }
+  REV.active = true; MV.active = false;
+  setMode('select');
+  mvBar(`<span>샤프트 등 <b>회전체</b>의 외곽선(정면도)을 드래그로 선택하세요 — 중심축 기준 좌우(위아래) 대칭인 부품에 적합합니다</span><button type="button" class="btn sm ghost" id="mvCancel">취소</button>`);
+}
+function revCapture(ids) {
+  const sp = S.space, sg = sp.segs, se = sp.segEnt;
+  const idSet = new Set(ids);
+  const lines = [];
+  for (let i = 0; i < se.length; i++) if (idSet.has(se[i])) lines.push(sg[i * 4], sg[i * 4 + 1], sg[i * 4 + 2], sg[i * 4 + 3]);
+  REV.active = false; mvHideBar();
+  if (!lines.length) { toast('선택 영역에서 선 데이터를 찾지 못했습니다. 다시 드래그하세요'); return; }
+  const bb = bboxOfLines(lines);
+  V3D.mv = null; V3D.selLines = null;
+  V3D.rev = { lines };
+  V3D.name = (S.drawing?.meta.name.replace(/\.\w+$/, '') || 'part') + '_회전체';
+  $('#v3dThickWrap').hidden = true; $('#v3dFlipWrap').hidden = true; $('#v3dRevWrap').hidden = false;
+  $('#revAxisY').value = bb.cy.toFixed(3);
+  $('#view3d').hidden = false;
+  if (!V3D.ready) init3DRenderer();
+  startLoop();
+  rebuildRev();
+}
+function buildRevolveGroup(lines, axisY) {
+  const { loops, openCount } = traceClosedLoops(lines);
+  if (!loops.length) throw new Error('닫힌 외곽선을 찾지 못했습니다');
+  let loop = loops[0];
+  for (const l of loops) if (Math.abs(signedArea(l)) > Math.abs(signedArea(loop))) loop = l;
+  const n = loop.length;
+  const isUpper = i => loop[i][1] >= axisY - 1e-6;
+  let startIdx = -1;
+  for (let i = 0; i < n; i++) { const prev = (i - 1 + n) % n; if (!isUpper(prev) && isUpper(i)) { startIdx = i; break; } }
+  let run;
+  if (startIdx === -1) {
+    run = loop.filter(([, y]) => y >= axisY - 1e-6).sort((a, b) => a[0] - b[0]);
+  } else {
+    run = [];
+    let i = startIdx;
+    for (let guard = 0; guard < n + 1; guard++) {
+      run.push(loop[i]);
+      if (!isUpper(i)) break;
+      const next = (i + 1) % n;
+      if (!isUpper(next)) break;
+      i = next;
+    }
+  }
+  if (run.length < 2) throw new Error('중심축 위쪽(또는 아래쪽) 외곽선을 찾지 못했습니다. 중심축 Y값을 확인하세요');
+  const pts = run.map(([x, y]) => new THREE.Vector2(Math.max(0, y - axisY), x));
+  const xFirst = run[0][0], xLast = run[run.length - 1][0];
+  pts.unshift(new THREE.Vector2(0, xFirst));
+  pts.push(new THREE.Vector2(0, xLast));
+  const geo = new THREE.LatheGeometry(pts, 48);
+  geo.rotateZ(Math.PI / 2);
+  geo.computeVertexNormals();
+  const mat = new THREE.MeshStandardMaterial({ color: 0x5b8def, metalness: 0.2, roughness: 0.5, side: THREE.DoubleSide });
+  const edgeMat = new THREE.LineBasicMaterial({ color: 0x1b2026, transparent: true, opacity: 0.3 });
+  const group = new THREE.Group();
+  group.add(new THREE.Mesh(geo, mat));
+  group.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 20), edgeMat));
+  return { group, openCount };
+}
+function rebuildRev() {
+  if (!V3D.rev) return;
+  const axisY = Number($('#revAxisY').value);
+  if (!Number.isFinite(axisY)) { toast('중심축 Y값이 올바르지 않습니다'); return; }
+  disposeGroupChildren(V3D.group);
+  let built, info;
+  try {
+    const r = buildRevolveGroup(V3D.rev.lines, axisY);
+    built = r.group; info = r;
+  } catch (err) {
+    toast('회전체 생성에 실패했습니다: 중심축 Y값을 조정하거나 다시 선택해보세요');
+    $('#v3dStats').innerHTML = `<div style="color:#e5a33a">모델 생성 실패 (${esc(err.message || String(err))})</div>`;
+    return;
+  }
+  const box = new THREE.Box3();
+  built.children.forEach(c => { if (c.geometry) { c.geometry.computeBoundingBox(); box.union(c.geometry.boundingBox); } });
+  const center = box.isEmpty() ? new THREE.Vector3() : box.getCenter(new THREE.Vector3());
+  built.position.set(-center.x, -center.y, -box.min.z || 0);
+  V3D.group.add(built);
+  const size = box.isEmpty() ? new THREE.Vector3(100, 100, 100) : box.getSize(new THREE.Vector3());
+  const dist = Math.max(60, Math.hypot(size.x, size.y, size.z) * 1.6);
+  V3D.camera.position.set(dist * 0.5, -dist * 0.85, dist * 0.6);
+  V3D.controls.target.set(0, 0, size.z / 2 || 0);
+  V3D.camera.updateProjectionMatrix();
+  $('#v3dStats').innerHTML = `<div>선택 선분: ${V3D.rev.lines.length / 4}개</div>` +
+    (info.openCount ? `<div style="color:#e5a33a">닫히지 않은 선: ${info.openCount}개 (제외됨)</div>` : '') +
+    `<div>최대 지름(추정): ${size.y.toFixed(1)} mm</div><div>축 길이: ${size.x.toFixed(1)} mm</div>` +
+    '<div style="color:#e5a33a">※ 선택한 외곽선을 중심축 기준 360° 회전(선반 가공)시킨 근사 모델입니다. 모양이 이상하면 중심축 Y값을 조정하고 "다시 만들기"를 눌러보세요.</div>';
+}
 function mvFinish() {
   MV.active = false; mvHideBar();
   if (!MV.lines.front || !MV.lines.top) { toast('정면도와 평면도는 반드시 선택해야 합니다'); return; }
   V3D.mv = { front: MV.lines.front, top: MV.lines.top, side: MV.lines.side };
-  V3D.selLines = null;
+  V3D.rev = null; V3D.selLines = null;
   V3D.name = (S.drawing?.meta.name.replace(/\.\w+$/, '') || 'part') + '_3뷰모델';
   $('#v3dThickWrap').hidden = true;
   $('#v3dFlipWrap').hidden = false;
+  $('#v3dRevWrap').hidden = true;
   $('#view3d').hidden = false;
   if (!V3D.ready) init3DRenderer();
   startLoop();
@@ -1201,8 +1297,9 @@ function close3DPreview() {
 }
 $('#v3dClose').onclick = close3DPreview;
 $('#view3d').addEventListener('click', e => { if (e.target.id === 'view3d') close3DPreview(); });
-$('#v3dRebuild').onclick = () => { V3D.mv ? rebuildMV() : rebuild3D(); };
+$('#v3dRebuild').onclick = () => { V3D.mv ? rebuildMV() : V3D.rev ? rebuildRev() : rebuild3D(); };
 $('#mvFlip')?.addEventListener('change', () => rebuildMV());
+$('#revAxisY')?.addEventListener('change', () => rebuildRev());
 $('#v3dStl').onclick = () => {
   if (!V3D.group || !V3D.group.children.length) { toast('먼저 3D 모델을 만들어주세요'); return; }
   const exporter = new STLExporter();
@@ -1290,6 +1387,7 @@ function act(name, arg) {
     case 'sel-dxf': exportSelDxf(); break;
     case 'sel-3d': open3DPreview(); break;
     case 'sel-3d-mv': startMultiViewCapture(); break;
+    case 'sel-3d-rev': startRevolveCapture(); break;
     case 'sel-clear': setSel([]); break;
     case 'sel-layer-off': { const r = S.space.ents[[...S.sel][0]]; const l = S.drawing.layers.get(r?.layer); if (l) { l.on = false; computeVis(); renderLayers(); setSel([]); } break; }
     case 'area-close': finishArea(); break;
@@ -1413,7 +1511,7 @@ renderProps();
   setTimeout(() => prepareSpare().then(() => { S.engine = 'ok'; }, err => { S.engine = String(err && err.message || err); }).finally(renderInfo), 800);
 })();
 const _open = openFile;
-window.__dwgv = { S, openBuffer, redraw, zoomBox, setSel, zoomToEnts, setMode, MV, mvCapture, mvFinish, boxSelect, V3D, rebuildMV, open3DPreview, getWH: () => [W, H] };
+window.__dwgv = { S, openBuffer, redraw, zoomBox, setSel, zoomToEnts, setMode, MV, mvCapture, mvFinish, boxSelect, V3D, rebuildMV, open3DPreview, getWH: () => [W, H], REV, revCapture, rebuildRev };
 document.addEventListener('dwgv-opened', () => { });
 // ---------- about ----------
 $('#aboutVer').textContent = `버전 ${APP_VERSION}`;
