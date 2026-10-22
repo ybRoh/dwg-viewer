@@ -4,11 +4,13 @@
 import { LibreDwg, Dwg_File_Type } from '../node_modules/@mlightcad/libredwg-web/dist/libredwg-web.js';
 import createModule from '../node_modules/@mlightcad/libredwg-web/wasm/libredwg-web.js';
 import { DxfParser } from '@mlightcad/dxf-json';
-import { normalizeDwg, normalizeDxf, buildDrawing, entityProps, versionName, unitName, fmt, TYPE_KO } from './scene.js';
+import { normalizeDwg, normalizeDxf, buildDrawing, entityProps, versionName, unitName, fmt, TYPE_KO, extractNativeMesh3D } from './scene.js';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js';
+import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { Brush, Evaluator, INTERSECTION } from 'three-bvh-csg';
 
@@ -18,7 +20,7 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 const store = { get(k, d) { try { const v = localStorage.getItem('dwgv.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } }, set(k, v) { try { localStorage.setItem('dwgv.' + k, JSON.stringify(v)); } catch { } } };
 const IS_LOCAL = location.protocol === 'file:';
 // ---- release info (edit these two lines before distributing) ----
-const APP_VERSION = '1.6.1';
+const APP_VERSION = '1.7.0';
 const AUTHOR = '아라곤';
 const SOURCE_NOTE = '소스 코드는 이 파일과 함께 배포되는 "도면뷰어_소스" 압축 파일에 들어 있습니다. 받지 못했다면 배포한 곳에 요청하세요.';
 
@@ -112,6 +114,7 @@ async function openBuffer(buf, name, size) {
     await tick();
     const d = buildDrawing(src, { measure, fileType: isDwg ? 'dwg' : 'dxf' });
     d.meta = { name, size, version, isDwg, parseMs: Math.round(t1 - t0), buildMs: d.buildMs };
+    d.nativeMesh3D = extractNativeMesh3D(src.model);
     if (!d.model.ents.length && !d.layouts.some(l => l.ents.length)) throw new Error('도면에 표시할 객체가 없습니다.');
     setDrawing(d);
     hideLoading();
@@ -998,7 +1001,7 @@ function open3DPreview() {
   const lines = [];
   for (let i = 0; i < se.length; i++) if (set.has(se[i])) lines.push(sg[i * 4], sg[i * 4 + 1], sg[i * 4 + 2], sg[i * 4 + 3]);
   if (!lines.length) { toast('선택한 객체에서 선 데이터를 찾을 수 없습니다 (문자·치수 등은 지원하지 않습니다)'); return; }
-  V3D.mv = null; V3D.rev = null;
+  V3D.mv = null; V3D.rev = null; V3D.imported = null; V3D.native = null;
   V3D.selLines = lines;
   V3D.name = (S.drawing?.meta.name.replace(/\.\w+$/, '') || 'part') + '_선택영역';
   $('#v3dThickWrap').hidden = false;
@@ -1064,7 +1067,7 @@ function revCapture(ids) {
   REV.active = false; mvHideBar();
   if (!lines.length) { toast('선택 영역에서 선 데이터를 찾지 못했습니다. 다시 드래그하세요'); return; }
   const bb = bboxOfLines(lines);
-  V3D.mv = null; V3D.selLines = null;
+  V3D.mv = null; V3D.selLines = null; V3D.imported = null; V3D.native = null;
   V3D.rev = { lines };
   V3D.name = (S.drawing?.meta.name.replace(/\.\w+$/, '') || 'part') + '_회전체';
   $('#v3dThickWrap').hidden = true; $('#v3dFlipWrap').hidden = true; $('#v3dRevWrap').hidden = false;
@@ -1141,11 +1144,134 @@ function rebuildRev() {
     `<div>최대 지름(추정): ${size.y.toFixed(1)} mm</div><div>축 길이: ${size.x.toFixed(1)} mm</div>` +
     '<div style="color:#e5a33a">※ 선택한 외곽선을 중심축 기준 360° 회전(선반 가공)시킨 근사 모델입니다. 모양이 이상하면 중심축 Y값을 조정하고 "다시 만들기"를 눌러보세요.</div>';
 }
+// ---------- STL/OBJ 가져오기: ACIS(3DSOLID) 우회 경로 — 외부 CAD/무료 변환 도구로 STL·OBJ로 내보낸 파일을 그대로 열어 봄 ----------
+function importMeshFile(file) {
+  const name = file.name, ext = name.toLowerCase().split('.').pop();
+  if (ext !== 'stl' && ext !== 'obj') { toast('STL 또는 OBJ 파일만 가져올 수 있습니다'); return; }
+  const reader = new FileReader();
+  reader.onerror = () => toast('파일을 읽는 중 오류가 발생했습니다');
+  reader.onload = () => {
+    let group;
+    try {
+      if (ext === 'stl') {
+        const geo = new STLLoader().parse(reader.result);
+        geo.computeVertexNormals();
+        const mat = new THREE.MeshStandardMaterial({ color: 0x5b8def, metalness: 0.15, roughness: 0.55, side: THREE.DoubleSide });
+        const edgeMat = new THREE.LineBasicMaterial({ color: 0x1b2026, transparent: true, opacity: 0.3 });
+        group = new THREE.Group();
+        group.add(new THREE.Mesh(geo, mat));
+        group.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 25), edgeMat));
+      } else {
+        const obj = new OBJLoader().parse(reader.result);
+        const mat = new THREE.MeshStandardMaterial({ color: 0x5b8def, metalness: 0.15, roughness: 0.55, side: THREE.DoubleSide });
+        group = new THREE.Group();
+        obj.traverse(o => {
+          if (o.isMesh) {
+            o.geometry.computeVertexNormals();
+            o.material = mat;
+            group.add(new THREE.LineSegments(new THREE.EdgesGeometry(o.geometry, 25), new THREE.LineBasicMaterial({ color: 0x1b2026, transparent: true, opacity: 0.3 })));
+          }
+        });
+        group.add(obj);
+      }
+    } catch (err) {
+      toast('파일을 해석하지 못했습니다: 올바른 STL/OBJ 파일인지 확인하세요 (' + (err.message || err) + ')');
+      return;
+    }
+    let triCount = 0;
+    group.traverse(o => { if (o.isMesh) triCount += (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3; });
+    V3D.mv = null; V3D.rev = null; V3D.selLines = null; V3D.native = null;
+    V3D.imported = { group, name, triCount };
+    V3D.name = name.replace(/\.\w+$/, '');
+    $('#v3dThickWrap').hidden = true; $('#v3dFlipWrap').hidden = true; $('#v3dRevWrap').hidden = true;
+    $('#view3d').hidden = false;
+    if (!V3D.ready) init3DRenderer();
+    startLoop();
+    rebuildImported();
+  };
+  if (ext === 'stl') reader.readAsArrayBuffer(file); else reader.readAsText(file);
+}
+function rebuildImported() {
+  if (!V3D.imported) return;
+  disposeGroupChildren(V3D.group);
+  const built = V3D.imported.group;
+  const box = new THREE.Box3().setFromObject(built);
+  const center = box.isEmpty() ? new THREE.Vector3() : box.getCenter(new THREE.Vector3());
+  built.position.set(built.position.x - center.x, built.position.y - center.y, built.position.z - (box.min.z || 0));
+  V3D.group.add(built);
+  const size = box.isEmpty() ? new THREE.Vector3(100, 100, 100) : box.getSize(new THREE.Vector3());
+  const dist = Math.max(60, Math.hypot(size.x, size.y, size.z) * 1.6);
+  V3D.camera.position.set(dist * 0.5, -dist * 0.85, dist * 0.6);
+  V3D.controls.target.set(0, 0, size.z / 2 || 0);
+  V3D.camera.updateProjectionMatrix();
+  $('#v3dStats').innerHTML = `<div>파일: ${esc(V3D.imported.name)}</div><div>삼각형: ${Math.round(V3D.imported.triCount).toLocaleString()}개</div><div>크기: ${size.x.toFixed(1)} × ${size.y.toFixed(1)} × ${size.z.toFixed(1)} (파일 단위)</div><div style="color:#e5a33a">※ 외부 도구(FreeCAD, ODA File Converter 등)로 변환한 STL/OBJ 파일을 그대로 불러온 결과입니다 — 이 뷰어가 직접 해석한 것이 아닙니다.</div>`;
+}
+// ---------- 원본 3D 보기: 도면에 저장된 진짜 3D 데이터(3D 면·레거시 폴리페이스 메시·3D 폴리선)를 추정 없이 그대로 표시 ----------
+function openNative3DView() {
+  const mesh3d = S.drawing?.nativeMesh3D || [];
+  if (!mesh3d.length) { toast('이 도면에는 원본 3D 데이터(3D 면·폴리페이스 메시·3D 폴리선)가 없습니다. ACIS 기반 3D 솔리드(3DSOLID)는 이 경로로 표시할 수 없습니다'); return; }
+  const positions = [], indices = [], wirePositions = [];
+  let vOff = 0, faceCount = 0, wireCount = 0;
+  for (const rec of mesh3d) {
+    if (rec.kind === 'wire') {
+      const vs = rec.vertices;
+      for (let i = 0; i < vs.length - 1; i++) { wirePositions.push(vs[i][0], vs[i][1], vs[i][2], vs[i + 1][0], vs[i + 1][1], vs[i + 1][2]); wireCount++; }
+      if (rec.closed && vs.length > 2) { wirePositions.push(vs[vs.length - 1][0], vs[vs.length - 1][1], vs[vs.length - 1][2], vs[0][0], vs[0][1], vs[0][2]); wireCount++; }
+      continue;
+    }
+    const base = vOff;
+    for (const v of rec.vertices) positions.push(v[0], v[1], v[2]);
+    vOff += rec.vertices.length;
+    for (const f of rec.faces) for (let i = 1; i < f.length - 1; i++) { indices.push(base + f[0], base + f[i], base + f[i + 1]); faceCount++; }
+  }
+  if (!positions.length && !wirePositions.length) { toast('원본 3D 데이터를 찾았지만 표시할 수 있는 형태가 아닙니다'); return; }
+  V3D.mv = null; V3D.rev = null; V3D.selLines = null; V3D.imported = null;
+  const group = new THREE.Group();
+  if (positions.length) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    const mat = new THREE.MeshStandardMaterial({ color: 0x5b8def, metalness: 0.15, roughness: 0.55, side: THREE.DoubleSide });
+    group.add(new THREE.Mesh(geo, mat));
+    group.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 25), new THREE.LineBasicMaterial({ color: 0x1b2026, transparent: true, opacity: 0.3 })));
+  }
+  if (wirePositions.length) {
+    const wgeo = new THREE.BufferGeometry();
+    wgeo.setAttribute('position', new THREE.Float32BufferAttribute(wirePositions, 3));
+    group.add(new THREE.LineSegments(wgeo, new THREE.LineBasicMaterial({ color: 0x2f7dde })));
+  }
+  V3D.native = { group, faceCount, wireCount, recCount: mesh3d.length };
+  V3D.name = (S.drawing?.meta.name.replace(/\.\w+$/, '') || 'part') + '_원본3D';
+  $('#v3dThickWrap').hidden = true; $('#v3dFlipWrap').hidden = true; $('#v3dRevWrap').hidden = true;
+  $('#view3d').hidden = false;
+  if (!V3D.ready) init3DRenderer();
+  startLoop();
+  rebuildNative3D();
+}
+function rebuildNative3D() {
+  if (!V3D.native) return;
+  disposeGroupChildren(V3D.group);
+  const built = V3D.native.group;
+  const box = new THREE.Box3().setFromObject(built);
+  const center = box.isEmpty() ? new THREE.Vector3() : box.getCenter(new THREE.Vector3());
+  built.position.set(built.position.x - center.x, built.position.y - center.y, built.position.z - (box.min.z || 0));
+  V3D.group.add(built);
+  const size = box.isEmpty() ? new THREE.Vector3(100, 100, 100) : box.getSize(new THREE.Vector3());
+  const dist = Math.max(60, Math.hypot(size.x, size.y, size.z) * 1.6);
+  V3D.camera.position.set(dist * 0.5, -dist * 0.85, dist * 0.6);
+  V3D.controls.target.set(0, 0, size.z / 2 || 0);
+  V3D.camera.updateProjectionMatrix();
+  $('#v3dStats').innerHTML = `<div>네이티브 3D 요소: ${V3D.native.recCount}개</div><div>면: ${V3D.native.faceCount.toLocaleString()}개</div>` +
+    (V3D.native.wireCount ? `<div>3D 폴리선 선분: ${V3D.native.wireCount}개</div>` : '') +
+    `<div>크기: ${size.x.toFixed(1)} × ${size.y.toFixed(1)} × ${size.z.toFixed(1)} (도면 단위)</div>` +
+    `<div style="color:#2f7dde">※ 도면 파일에 저장된 3D 면·폴리페이스 메시·3D 폴리선을 그대로 표시합니다 — 추정이나 변환 없는 원본 데이터입니다. ACIS 기반 3DSOLID는 포함되지 않습니다.</div>`;
+}
 function mvFinish() {
   MV.active = false; mvHideBar();
   if (!MV.lines.front || !MV.lines.top) { toast('정면도와 평면도는 반드시 선택해야 합니다'); return; }
   V3D.mv = { front: MV.lines.front, top: MV.lines.top, side: MV.lines.side };
-  V3D.rev = null; V3D.selLines = null;
+  V3D.rev = null; V3D.selLines = null; V3D.imported = null; V3D.native = null;
   V3D.name = (S.drawing?.meta.name.replace(/\.\w+$/, '') || 'part') + '_3뷰모델';
   $('#v3dThickWrap').hidden = true;
   $('#v3dFlipWrap').hidden = false;
@@ -1297,7 +1423,7 @@ function close3DPreview() {
 }
 $('#v3dClose').onclick = close3DPreview;
 $('#view3d').addEventListener('click', e => { if (e.target.id === 'view3d') close3DPreview(); });
-$('#v3dRebuild').onclick = () => { V3D.mv ? rebuildMV() : V3D.rev ? rebuildRev() : rebuild3D(); };
+$('#v3dRebuild').onclick = () => { V3D.mv ? rebuildMV() : V3D.rev ? rebuildRev() : V3D.imported ? rebuildImported() : V3D.native ? rebuildNative3D() : rebuild3D(); };
 $('#mvFlip')?.addEventListener('change', () => rebuildMV());
 $('#revAxisY')?.addEventListener('change', () => rebuildRev());
 $('#v3dStl').onclick = () => {
@@ -1335,6 +1461,7 @@ function showError(msg, isDwg) {
 $('#errClose').addEventListener('click', () => $('#error').hidden = true);
 
 $('#fileInput').addEventListener('change', e => { const f = e.target.files[0]; if (f) openFile(f); e.target.value = ''; });
+$('#meshFileInput').addEventListener('change', e => { const f = e.target.files[0]; if (f) importMeshFile(f); e.target.value = ''; });
 $$('[data-open]').forEach(b => b.addEventListener('click', () => $('#fileInput').click()));
 let dragN = 0;
 window.addEventListener('dragenter', e => { e.preventDefault(); dragN++; $('#drop').hidden = false; });
@@ -1388,6 +1515,8 @@ function act(name, arg) {
     case 'sel-3d': open3DPreview(); break;
     case 'sel-3d-mv': startMultiViewCapture(); break;
     case 'sel-3d-rev': startRevolveCapture(); break;
+    case 'import-mesh': $('#meshFileInput').click(); break;
+    case 'view-native3d': openNative3DView(); break;
     case 'sel-clear': setSel([]); break;
     case 'sel-layer-off': { const r = S.space.ents[[...S.sel][0]]; const l = S.drawing.layers.get(r?.layer); if (l) { l.on = false; computeVis(); renderLayers(); setSel([]); } break; }
     case 'area-close': finishArea(); break;
@@ -1511,7 +1640,7 @@ renderProps();
   setTimeout(() => prepareSpare().then(() => { S.engine = 'ok'; }, err => { S.engine = String(err && err.message || err); }).finally(renderInfo), 800);
 })();
 const _open = openFile;
-window.__dwgv = { S, openBuffer, redraw, zoomBox, setSel, zoomToEnts, setMode, MV, mvCapture, mvFinish, boxSelect, V3D, rebuildMV, open3DPreview, getWH: () => [W, H], REV, revCapture, rebuildRev };
+window.__dwgv = { S, openBuffer, redraw, zoomBox, setSel, zoomToEnts, setMode, MV, mvCapture, mvFinish, boxSelect, V3D, rebuildMV, open3DPreview, getWH: () => [W, H], REV, revCapture, rebuildRev, importMeshFile, rebuildImported, openNative3DView, rebuildNative3D };
 document.addEventListener('dwgv-opened', () => { });
 // ---------- about ----------
 $('#aboutVer').textContent = `버전 ${APP_VERSION}`;

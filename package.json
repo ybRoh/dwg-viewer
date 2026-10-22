@@ -1,6 +1,6 @@
 {
   "name": "drawing-viewer",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "description": "브라우저에서 DWG·DXF 도면을 여는 단일 HTML 뷰어",
   "license": "GPL-3.0-or-later",
   "private": true,

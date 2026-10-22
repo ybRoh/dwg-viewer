@@ -462,7 +462,8 @@ export function buildDrawing(src, opts) {
         break;
       }
       case '3DFACE': {
-        const pr = props(e, ctx), pts = [e.corner1, e.corner2, e.corner3, e.corner4 || e.corner3].map(P);
+        const pr = props(e, ctx), corners = faceCorners3d(e);
+        const pts = [corners[0], corners[1], corners[2], corners[3] || corners[2]].map(P);
         line(space, ctx, pr, pts.flat(), true, M);
         break;
       }
@@ -787,6 +788,70 @@ export function buildDrawing(src, opts) {
     header: H, layers, lpList, model, layouts, typeCount, unsupported, blocks,
     buildMs: Date.now() - tStart, ltypes: dashCache, globalRatio,
   };
+}
+
+// ---------- native 3D mesh extraction (3DFACE / legacy POLYFACE mesh / 3D polygon mesh / 3D polyline) ----------
+// Scans top-level model-space entities (entities nested inside INSERT/block references are not
+// expanded) for real 3D geometry the DWG/DXF format carries outside the proprietary ACIS solid
+// format, and returns it as plain {kind, vertices:[[x,y,z],...], faces:[[i,i,i,...],...]} records
+// ready for direct 3D display — no reconstruction or guessing involved, just reading what is
+// actually stored in the file.
+export function faceCorners3d(e) {
+  // libredwg-web (DWG) exposes corner1..corner4; dxf-json (DXF) exposes a vertices[] array instead.
+  if (e.corner1) return [e.corner1, e.corner2, e.corner3, e.corner4];
+  return e.vertices || [];
+}
+export function extractNativeMesh3D(entities) {
+  const P3 = p => p ? [num(p.x), num(p.y), num(p.z)] : [0, 0, 0];
+  const out = [];
+  for (const e of entities || []) {
+    if (!e || e.isVisible === false) continue;
+    const t = e.type;
+    if (t === '3DFACE') {
+      const raw = faceCorners3d(e).filter(Boolean).map(P3);
+      const pts = raw.filter((p, i) => i === 0 || p[0] !== raw[i - 1][0] || p[1] !== raw[i - 1][1] || p[2] !== raw[i - 1][2]);
+      if (pts.length >= 3) out.push({ kind: 'face', handle: e.handle, layer: e.layer || '0', vertices: pts, faces: [pts.map((_, i) => i)] });
+    } else if (t === 'POLYLINE2D' || t === 'POLYLINE3D' || t === 'POLYLINE_MESH' || t === 'POLYLINE') {
+      const flag = num(e.flag);
+      const vs = e.vertices || [];
+      if (flag & 64) { // legacy POLYFACE mesh: vertex-definition records + face-definition records (flag 128)
+        // DXF vertex-flag convention: a polyface coordinate vertex carries bit 64 (often combined
+        // with bit 128); a pure face-definition record carries bit 128 WITHOUT bit 64.
+        const coordVerts = [], faceRecs = [];
+        for (const v of vs) {
+          const vf = num(v.flag);
+          ((vf & 128) && !(vf & 64) ? faceRecs : coordVerts).push(v);
+        }
+        const vertices = coordVerts.map(P3);
+        const faces = [];
+        // Face-index fields differ by source library: libredwg-web (DWG) uses polyfaceIndex0..3,
+        // dxf-json (DXF) uses a faces:[] array. Support both.
+        for (const fr of (faceRecs.length ? faceRecs : coordVerts)) {
+          const raw = Array.isArray(fr.faces) ? fr.faces : [fr.polyfaceIndex0, fr.polyfaceIndex1, fr.polyfaceIndex2, fr.polyfaceIndex3];
+          const idx = raw.map(n => num(n)).filter(n => n !== 0).map(n => Math.abs(n) - 1);
+          if (idx.length >= 3 && idx.every(i => i >= 0 && i < vertices.length)) faces.push(idx);
+        }
+        if (vertices.length >= 3 && faces.length) out.push({ kind: 'polyface', handle: e.handle, layer: e.layer || '0', vertices, faces });
+      } else if (flag & 16) { // 3D polygon mesh grid (M x N vertices, row-major)
+        const m = num(e.meshMVertexCount), n = num(e.meshNVertexCount);
+        if (m >= 2 && n >= 2 && vs.length >= m * n) {
+          const vertices = vs.slice(0, m * n).map(P3);
+          const closedM = !!(flag & 1), closedN = !!(flag & 32);
+          const iMax = closedM ? m : m - 1, jMax = closedN ? n : n - 1;
+          const faces = [];
+          for (let i = 0; i < iMax; i++) for (let j = 0; j < jMax; j++) {
+            const i1 = (i + 1) % m, j1 = (j + 1) % n;
+            faces.push([i * n + j, i1 * n + j, i1 * n + j1, i * n + j1]);
+          }
+          if (faces.length) out.push({ kind: 'grid', handle: e.handle, layer: e.layer || '0', vertices, faces });
+        }
+      } else if (flag & 8) { // pure 3D polyline: a real 3D wire, not a mesh
+        const pts = vs.filter(v => !(num(v.flag) & 16)).map(P3);
+        if (pts.length >= 2) out.push({ kind: 'wire', handle: e.handle, layer: e.layer || '0', vertices: pts, closed: !!(flag & 1) });
+      }
+    }
+  }
+  return out;
 }
 
 function robustBBox(sp) {
