@@ -9,6 +9,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { Brush, Evaluator, INTERSECTION } from 'three-bvh-csg';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -564,10 +566,12 @@ canvas.addEventListener('pointerup', e => {
     S.boxRect = null;
     if (d.moved) {
       const ids = boxSelect(d.x0, d.y0, x, y);
+      if (MV.active) { mvCapture(ids); redraw(); return; }
       if (e.shiftKey || e.ctrlKey || e.metaKey) { const s = new Set(S.sel); for (const id of ids) s.add(id); setSel(s); }
       else setSel(ids);
       redraw(); return;
     }
+    if (MV.active) return;
   }
   if (d.moved) return;
   if (d.btn === 2) { if (S.mode === 'area' && S.pending.length >= 3) finishArea(); else showCtx(e.clientX, e.clientY); return; }
@@ -993,11 +997,143 @@ function open3DPreview() {
   const lines = [];
   for (let i = 0; i < se.length; i++) if (set.has(se[i])) lines.push(sg[i * 4], sg[i * 4 + 1], sg[i * 4 + 2], sg[i * 4 + 3]);
   if (!lines.length) { toast('선택한 객체에서 선 데이터를 찾을 수 없습니다 (문자·치수 등은 지원하지 않습니다)'); return; }
+  V3D.mv = null;
   V3D.selLines = lines;
   V3D.name = (S.drawing?.meta.name.replace(/\.\w+$/, '') || 'part') + '_선택영역';
+  $('#v3dThickWrap').hidden = false;
+  $('#v3dFlipWrap').hidden = true;
   $('#view3d').hidden = false;
   if (!V3D.ready) init3DRenderer();
+  startLoop();
   rebuild3D();
+}
+// ---------- 3뷰(정면·평면·측면) 투상도 교차 3D 모델링 ----------
+const MV = { active: false, step: 0, lines: { front: null, top: null, side: null } };
+const MV_STEPS = ['front', 'top', 'side'];
+const MV_LABEL = { front: '정면도', top: '평면도', side: '측면도' };
+function mvBar(html) {
+  let el = $('#mvBar');
+  if (!el) { el = document.createElement('div'); el.id = 'mvBar'; el.className = 'mv-bar'; document.body.appendChild(el); }
+  el.innerHTML = html;
+  el.hidden = false;
+  if ($('#mvCancel')) $('#mvCancel').onclick = mvCancel;
+  if ($('#mvSkip')) $('#mvSkip').onclick = mvFinish;
+}
+function mvHideBar() { const el = $('#mvBar'); if (el) el.hidden = true; }
+function startMultiViewCapture() {
+  if (!S.space) { toast('도면을 먼저 여세요'); return; }
+  MV.active = true; MV.step = 0; MV.lines.front = MV.lines.top = MV.lines.side = null;
+  setMode('select');
+  setSel([]);
+  mvShowStep();
+}
+function mvShowStep() {
+  if (MV.step === 0) mvBar(`<span>① <b>정면도</b> 영역을 드래그로 선택하세요</span><button type="button" class="btn sm ghost" id="mvCancel">취소</button>`);
+  else if (MV.step === 1) mvBar(`<span>② <b>평면도</b> 영역을 드래그로 선택하세요</span><button type="button" class="btn sm ghost" id="mvCancel">취소</button>`);
+  else mvBar(`<span>③ <b>측면도</b> 영역을 드래그로 선택하세요 (없으면 완료를 누르세요)</span><button type="button" class="btn sm" id="mvSkip">완료 (측면도 생략)</button><button type="button" class="btn sm ghost" id="mvCancel">취소</button>`);
+}
+function mvCapture(ids) {
+  const sp = S.space, sg = sp.segs, se = sp.segEnt;
+  const idSet = new Set(ids);
+  const lines = [];
+  for (let i = 0; i < se.length; i++) if (idSet.has(se[i])) lines.push(sg[i * 4], sg[i * 4 + 1], sg[i * 4 + 2], sg[i * 4 + 3]);
+  if (!lines.length) { toast('선택 영역에서 선 데이터를 찾지 못했습니다. 다시 드래그하세요'); return; }
+  const key = MV_STEPS[MV.step];
+  MV.lines[key] = lines;
+  MV.step++;
+  toast(`${MV_LABEL[key]} 선택 완료 (선분 ${lines.length / 4}개)`);
+  if (MV.step >= MV_STEPS.length) { mvFinish(); return; }
+  mvShowStep();
+}
+function mvCancel() { MV.active = false; mvHideBar(); }
+function mvFinish() {
+  MV.active = false; mvHideBar();
+  if (!MV.lines.front || !MV.lines.top) { toast('정면도와 평면도는 반드시 선택해야 합니다'); return; }
+  V3D.mv = { front: MV.lines.front, top: MV.lines.top, side: MV.lines.side };
+  V3D.selLines = null;
+  V3D.name = (S.drawing?.meta.name.replace(/\.\w+$/, '') || 'part') + '_3뷰모델';
+  $('#v3dThickWrap').hidden = true;
+  $('#v3dFlipWrap').hidden = false;
+  $('#view3d').hidden = false;
+  if (!V3D.ready) init3DRenderer();
+  startLoop();
+  rebuildMV();
+}
+function shapesFromLines(lines) {
+  const { loops, openCount } = traceClosedLoops(lines);
+  return { shapes: loopsToShapes(loops), openCount };
+}
+function bboxOfLines(lines) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let i = 0; i < lines.length; i += 4) {
+    minX = Math.min(minX, lines[i], lines[i + 2]); maxX = Math.max(maxX, lines[i], lines[i + 2]);
+    minY = Math.min(minY, lines[i + 1], lines[i + 3]); maxY = Math.max(maxY, lines[i + 1], lines[i + 3]);
+  }
+  return { minX, minY, maxX, maxY, cx: (minX + maxX) / 2, cy: (minY + maxY) / 2, w: maxX - minX, h: maxY - minY };
+}
+function buildViewGeometry(shapes, depth) {
+  if (!shapes.length) return null;
+  const geos = shapes.map(sh => { const g = new THREE.ExtrudeGeometry(sh, { depth, bevelEnabled: false, curveSegments: 1 }); g.computeVertexNormals(); return g; });
+  return geos.length > 1 ? mergeGeometries(geos, false) : geos[0];
+}
+function buildMultiViewSolid(mv, opts) {
+  const frontBB = bboxOfLines(mv.front), topBB = bboxOfLines(mv.top), sideBB = mv.side ? bboxOfLines(mv.side) : null;
+  const W = frontBB.w, H = frontBB.h, D = topBB.h;
+  const front = shapesFromLines(mv.front), top = shapesFromLines(mv.top), side = mv.side ? shapesFromLines(mv.side) : null;
+  let frontGeo = buildViewGeometry(front.shapes, D);
+  let topGeo = buildViewGeometry(top.shapes, H);
+  let sideGeo = side ? buildViewGeometry(side.shapes, W) : null;
+  if (!frontGeo || !topGeo) throw new Error('닫힌 외곽선을 찾지 못했습니다');
+  frontGeo.translate(-frontBB.cx, -frontBB.cy, -D / 2);
+  topGeo.translate(-topBB.cx, -topBB.cy, 0);
+  topGeo.rotateX(-Math.PI / 2);
+  topGeo.translate(0, -H / 2, 0);
+  let openCount = front.openCount + top.openCount;
+  if (sideGeo) {
+    sideGeo.translate(-sideBB.cx, -sideBB.cy, 0);
+    if (opts.flipSide) { sideGeo.rotateY(-Math.PI / 2); sideGeo.translate(W / 2, 0, 0); }
+    else { sideGeo.rotateY(Math.PI / 2); sideGeo.translate(-W / 2, 0, 0); }
+    openCount += side.openCount;
+  }
+  const evaluator = new Evaluator();
+  let result = evaluator.evaluate(new Brush(frontGeo), new Brush(topGeo), INTERSECTION);
+  if (sideGeo) result = evaluator.evaluate(result, new Brush(sideGeo), INTERSECTION);
+  result.geometry.computeVertexNormals();
+  const mat = new THREE.MeshStandardMaterial({ color: 0x5b8def, metalness: 0.15, roughness: 0.55, side: THREE.DoubleSide });
+  const edgeMat = new THREE.LineBasicMaterial({ color: 0x1b2026, transparent: true, opacity: 0.35 });
+  const group = new THREE.Group();
+  group.add(new THREE.Mesh(result.geometry, mat));
+  group.add(new THREE.LineSegments(new THREE.EdgesGeometry(result.geometry, 25), edgeMat));
+  return { group, size: { W, H, D }, openCount };
+}
+function rebuildMV() {
+  if (!V3D.mv) return;
+  const flipSide = $('#mvFlip')?.checked || false;
+  disposeGroupChildren(V3D.group);
+  let built, info;
+  try {
+    const r = buildMultiViewSolid(V3D.mv, { flipSide });
+    built = r.group; info = r;
+  } catch (err) {
+    toast('3뷰 모델 생성에 실패했습니다: 각 투상도 영역에 완전히 닫힌 윤곽선이 포함되도록 다시 선택해보세요');
+    $('#v3dStats').innerHTML = `<div style="color:#e5a33a">모델 생성 실패 (${esc(err.message || String(err))})</div>`;
+    return;
+  }
+  const box = new THREE.Box3();
+  built.children.forEach(c => { if (c.geometry) { c.geometry.computeBoundingBox(); box.union(c.geometry.boundingBox); } });
+  const center = box.isEmpty() ? new THREE.Vector3() : box.getCenter(new THREE.Vector3());
+  built.position.set(-center.x, -center.y, -box.min.z || 0);
+  V3D.group.add(built);
+  const size = box.isEmpty() ? new THREE.Vector3(100, 100, 100) : box.getSize(new THREE.Vector3());
+  const dist = Math.max(60, Math.hypot(size.x, size.y, size.z) * 1.6);
+  V3D.camera.position.set(dist * 0.5, -dist * 0.85, dist * 0.6);
+  V3D.controls.target.set(0, 0, size.z / 2 || 0);
+  V3D.camera.updateProjectionMatrix();
+  $('#v3dStats').innerHTML = `<div>정면도 선분: ${V3D.mv.front.length / 4}개</div><div>평면도 선분: ${V3D.mv.top.length / 4}개</div>` +
+    (V3D.mv.side ? `<div>측면도 선분: ${V3D.mv.side.length / 4}개</div>` : '<div class="muted">측면도 없음</div>') +
+    (info.openCount ? `<div style="color:#e5a33a">닫히지 않은 선: ${info.openCount}개 (제외됨)</div>` : '') +
+    `<div>크기(추정): ${size.x.toFixed(1)} × ${size.y.toFixed(1)} × ${size.z.toFixed(1)} mm</div>` +
+    '<div style="color:#e5a33a">※ 3개 투상도를 교차(intersection)시킨 근사 모델입니다. 결과가 뒤집혀 보이면 "측면도 뒤집기"를 체크해보세요.</div>';
 }
 function init3DRenderer() {
   const canvas = $('#v3dCanvas');
@@ -1024,17 +1160,25 @@ function init3DRenderer() {
   };
   resize();
   new ResizeObserver(resize).observe(wrap);
-  const loop = () => { controls.update(); renderer.render(scene, camera); V3D.raf = requestAnimationFrame(loop); };
-  loop();
+  V3D.loopFn = () => { controls.update(); renderer.render(scene, camera); V3D.raf = requestAnimationFrame(V3D.loopFn); };
+  startLoop();
+}
+function startLoop() { if (!V3D.raf && V3D.loopFn) V3D.loopFn(); }
+function stopLoop() { if (V3D.raf) { cancelAnimationFrame(V3D.raf); V3D.raf = 0; } }
+function disposeGroupChildren(group) {
+  while (group.children.length) {
+    const c = group.children.pop();
+    c.traverse?.(o => {
+      o.geometry?.dispose();
+      if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose());
+    });
+    group.remove(c);
+  }
 }
 function rebuild3D() {
   if (!V3D.selLines) return;
   const thickness = Math.max(0.01, Number($('#v3dThick').value) || 20);
-  while (V3D.group.children.length) {
-    const c = V3D.group.children.pop();
-    c.traverse?.(o => o.geometry?.dispose());
-    V3D.group.remove(c);
-  }
+  disposeGroupChildren(V3D.group);
   const { group: built, loopCount, shapeCount, openCount } = buildExtrudeGroup(V3D.selLines, thickness);
   // center the model and lift it onto the grid
   const box = new THREE.Box3();
@@ -1053,10 +1197,12 @@ function rebuild3D() {
 }
 function close3DPreview() {
   $('#view3d').hidden = true;
+  stopLoop();
 }
 $('#v3dClose').onclick = close3DPreview;
 $('#view3d').addEventListener('click', e => { if (e.target.id === 'view3d') close3DPreview(); });
-$('#v3dRebuild').onclick = rebuild3D;
+$('#v3dRebuild').onclick = () => { V3D.mv ? rebuildMV() : rebuild3D(); };
+$('#mvFlip')?.addEventListener('change', () => rebuildMV());
 $('#v3dStl').onclick = () => {
   if (!V3D.group || !V3D.group.children.length) { toast('먼저 3D 모델을 만들어주세요'); return; }
   const exporter = new STLExporter();
@@ -1143,6 +1289,7 @@ function act(name, arg) {
     case 'sel-zoom': zoomToEnts([...S.sel]); break;
     case 'sel-dxf': exportSelDxf(); break;
     case 'sel-3d': open3DPreview(); break;
+    case 'sel-3d-mv': startMultiViewCapture(); break;
     case 'sel-clear': setSel([]); break;
     case 'sel-layer-off': { const r = S.space.ents[[...S.sel][0]]; const l = S.drawing.layers.get(r?.layer); if (l) { l.on = false; computeVis(); renderLayers(); setSel([]); } break; }
     case 'area-close': finishArea(); break;
@@ -1266,7 +1413,7 @@ renderProps();
   setTimeout(() => prepareSpare().then(() => { S.engine = 'ok'; }, err => { S.engine = String(err && err.message || err); }).finally(renderInfo), 800);
 })();
 const _open = openFile;
-window.__dwgv = { S, openBuffer, redraw, zoomBox, setSel, zoomToEnts, setMode };
+window.__dwgv = { S, openBuffer, redraw, zoomBox, setSel, zoomToEnts, setMode, MV, mvCapture, mvFinish, boxSelect, V3D, rebuildMV, open3DPreview, getWH: () => [W, H] };
 document.addEventListener('dwgv-opened', () => { });
 // ---------- about ----------
 $('#aboutVer').textContent = `버전 ${APP_VERSION}`;
