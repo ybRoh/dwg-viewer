@@ -860,7 +860,42 @@ function exportSelDxf() {
   a.href = URL.createObjectURL(new Blob([body], { type: 'application/dxf' }));
   a.download = (S.drawing?.meta.name.replace(/\.\w+$/, '') || 'drawing') + '_\uc120\ud0dd\uc601\uc5ed.dxf';
   a.click();
-  toast(`\uc120\ud0dd\ud55c ${set.size}\uac1c \uac1d\uccb4(\uc120\ubd84 ${lines.length / 4}\uac1c)\ub97c DXF\ub85c \ub0b4\ubcf4\ub0c8\uc2b5\ub2c8\ub2e4. 3D \ubcc0\ud658\uc5d0 \uc4f0\ub824\uba74 \uc774 \ud30c\uc77c\uc744 SolidCraft \uc2a4\ucf00\uce58\uc5d0 \uc0bd\uc785\ud558\uc138\uc694`);
+  const copied = copyTextToClipboard(body);
+  const base = `\uc120\ud0dd\ud55c ${set.size}\uac1c \uac1d\uccb4(\uc120\ubd84 ${lines.length / 4}\uac1c)\ub97c DXF\ub85c \ub0b4\ubcf4\ub0c8\uc2b5\ub2c8\ub2e4.`;
+  if (copied) {
+    toast(`${base} DXF \ub0b4\uc6a9\uc774 \ud074\ub9bd\ubcf4\ub4dc\uc5d0\ub3c4 \ubcf5\uc0ac\ub418\uc5c8\uc2b5\ub2c8\ub2e4 \u2014 Claude \ub300\ud654\uc5d0 \ubd99\uc5ec\ub123\uc73c\uc138\uc694 (Ctrl/Cmd+V), \uc790\ub3d9\uc73c\ub85c 3D\ub85c \ub9cc\ub4e4\uc5b4\uc9c4 \ub2e4\uc74c \uc5ec\uae30\uc5d0 \ub2e4\uc2dc \ub098\ud0c0\ub0a9\ub2c8\ub2e4.`);
+  } else {
+    toast(`${base} 3D \ubcc0\ud658\uc5d0 \uc4f0\ub824\uba74 \uc774 \ud30c\uc77c\uc744 SolidCraft \uc2a4\ucf00\uce58\uc5d0 \uc0bd\uc785\ud558\uc138\uc694 (\ub2e4\uc6b4\ub85c\ub4dc\ub9cc \uc131\uacf5, \ud074\ub9bd\ubcf4\ub4dc \ubcf5\uc0ac\ub294 \uc774 \ud658\uacbd\uc5d0\uc11c \uc9c0\uc6d0\ub418\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4)`);
+  }
+}
+// \ud074\ub9bd\ubcf4\ub4dc\uc5d0 \ud574\ub2f9 DXF \ud14d\uc2a4\ud2b8\ub97c \ubc14\ub85c \ub123\uc5b4\uc90c \u2014 Claude \ub300\ud654\uc5d0 \ubd99\uc5ec\ub123\uae30\ub9cc \ud558\uc5ec\ub3c4 \uc790\ub3d9\uc73c\ub85c 3D\ub85c \ub9cc\ub4e0 \ud30c\uc77c\uc744 \uc804\ub2ec\ud560 \uc218 \uc788\ub3c4\ub85d \ud568.
+function copyTextToClipboard(text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+      return true;
+    }
+    return fallbackCopy(text);
+  } catch (e) {
+    return fallbackCopy(text);
+  }
+}
+function fallbackCopy(text) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    ta.style.top = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) {
+    return false;
+  }
 }
 if (IS_LOCAL) $$('.local-only').forEach(el => el.hidden = false);
 
