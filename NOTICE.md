@@ -9,6 +9,8 @@
 | @mlightcad/dxf-json | 1.2.8 | MLight Lee | GPL-3.0 | https://github.com/mlight-lee/dxf-json |
 | Emscripten 런타임 | libredwg-web에 포함 | Emscripten authors | MIT | https://github.com/emscripten-core/emscripten |
 | IBM Plex Sans KR / IBM Plex Mono | Google Fonts에서 불러옴 (파일에 포함하지 않음) | IBM Corp. | SIL OFL 1.1 | https://github.com/IBM/plex |
+| OCCT (Open CASCADE Technology) | occt-import-js에 포함 | Open Cascade SAS | LGPL-2.1 (예외 조항 포함) | https://github.com/Open-Cascade-SAS/OCCT |
+| occt-import-js | 0.0.23 | Viktor Kovacs | LGPL-2.1 | https://github.com/kovacsv/occt-import-js |
 
 GPL 전문은 `LICENSE` 파일에 있습니다.
 

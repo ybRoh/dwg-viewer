@@ -4,6 +4,7 @@
 import { LibreDwg, Dwg_File_Type } from '../node_modules/@mlightcad/libredwg-web/dist/libredwg-web.js';
 import createModule from '../node_modules/@mlightcad/libredwg-web/wasm/libredwg-web.js';
 import { DxfParser } from '@mlightcad/dxf-json';
+import occtimportjs from 'occt-import-js';
 import { normalizeDwg, normalizeDxf, buildDrawing, entityProps, versionName, unitName, fmt, TYPE_KO, extractNativeMesh3D } from './scene.js';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -20,7 +21,7 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 const store = { get(k, d) { try { const v = localStorage.getItem('dwgv.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } }, set(k, v) { try { localStorage.setItem('dwgv.' + k, JSON.stringify(v)); } catch { } } };
 const IS_LOCAL = location.protocol === 'file:';
 // ---- release info (edit these two lines before distributing) ----
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.8.0';
 const AUTHOR = '아라곤';
 const SOURCE_NOTE = '소스 코드는 이 파일과 함께 배포되는 "도면뷰어_소스" 압축 파일에 들어 있습니다. 받지 못했다면 배포한 곳에 요청하세요.';
 
@@ -61,6 +62,26 @@ async function createLib() {
   const wasmBinary = await getWasmModule();
   const inst = await createModule({ wasmBinary, print: () => { }, printErr: () => { } });
   return LibreDwg.createByWasmInstance(inst);
+}
+// STEP/IGES import via OpenCascade (OCCT, LGPL-2.1) WASM build — a public, documented CAD
+// exchange format, unlike the proprietary ACIS/SAT solids this app cannot parse.
+let occtWasmPromise = null, occtPromise = null;
+function getOcctWasmModule() {
+  if (!occtWasmPromise) occtWasmPromise = (async () => {
+    const b64 = $('#occt-wasm-gz').textContent.trim();
+    const bin = atob(b64), bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  })().catch(e => { occtWasmPromise = null; throw e; });
+  return occtWasmPromise;
+}
+function getOcct() {
+  if (!occtPromise) occtPromise = (async () => {
+    const wasmBinary = await getOcctWasmModule();
+    return occtimportjs({ wasmBinary, print: () => { }, printErr: () => { } });
+  })().catch(e => { occtPromise = null; throw e; });
+  return occtPromise;
 }
 function getLib() {
   const p = spare || createLib();
@@ -1181,7 +1202,7 @@ function importMeshFile(file) {
     let triCount = 0;
     group.traverse(o => { if (o.isMesh) triCount += (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3; });
     V3D.mv = null; V3D.rev = null; V3D.selLines = null; V3D.native = null;
-    V3D.imported = { group, name, triCount };
+    V3D.imported = { group, name, triCount, kind: 'mesh' };
     V3D.name = name.replace(/\.\w+$/, '');
     $('#v3dThickWrap').hidden = true; $('#v3dFlipWrap').hidden = true; $('#v3dRevWrap').hidden = true;
     $('#view3d').hidden = false;
@@ -1204,7 +1225,60 @@ function rebuildImported() {
   V3D.camera.position.set(dist * 0.5, -dist * 0.85, dist * 0.6);
   V3D.controls.target.set(0, 0, size.z / 2 || 0);
   V3D.camera.updateProjectionMatrix();
-  $('#v3dStats').innerHTML = `<div>파일: ${esc(V3D.imported.name)}</div><div>삼각형: ${Math.round(V3D.imported.triCount).toLocaleString()}개</div><div>크기: ${size.x.toFixed(1)} × ${size.y.toFixed(1)} × ${size.z.toFixed(1)} (파일 단위)</div><div style="color:#e5a33a">※ 외부 도구(FreeCAD, ODA File Converter 등)로 변환한 STL/OBJ 파일을 그대로 불러온 결과입니다 — 이 뷰어가 직접 해석한 것이 아닙니다.</div>`;
+  const note = V3D.imported.kind === 'occt'
+    ? '<div style="color:#2f7dde">※ OpenCascade(오픈소스 CAD 커널)로 STEP/IGES 파일을 직접 해석한 결과입니다.</div>'
+    : '<div style="color:#e5a33a">※ 외부 도구(FreeCAD, ODA File Converter 등)로 변환한 STL/OBJ 파일을 그대로 불러온 결과입니다 — 이 뷰어가 직접 해석한 것이 아닙니다.</div>';
+  $('#v3dStats').innerHTML = `<div>파일: ${esc(V3D.imported.name)}</div><div>삼각형: ${Math.round(V3D.imported.triCount).toLocaleString()}개</div><div>크기: ${size.x.toFixed(1)} × ${size.y.toFixed(1)} × ${size.z.toFixed(1)} (파일 단위)</div>${note}`;
+}
+// ---------- STEP/IGES 가져오기: OpenCascade(OCCT)로 직접 해석 — 공개 표준 포맷이라 ACIS와 달리 오픈소스로 가능 ----------
+function buildMeshFromOcctResult(result) {
+  const group = new THREE.Group();
+  const defaultMat = new THREE.MeshStandardMaterial({ color: 0x5b8def, metalness: 0.15, roughness: 0.55, side: THREE.DoubleSide });
+  let triCount = 0;
+  for (const m of result.meshes || []) {
+    const pos = m.attributes?.position?.array;
+    const idx = m.index?.array;
+    if (!pos || !idx || !pos.length || !idx.length) continue;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(pos), 3));
+    geo.setIndex(new THREE.Uint32BufferAttribute(new Uint32Array(idx), 1));
+    if (m.attributes?.normal?.array) geo.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(m.attributes.normal.array), 3));
+    else geo.computeVertexNormals();
+    const mat = m.color ? new THREE.MeshStandardMaterial({ color: new THREE.Color(m.color.r, m.color.g, m.color.b), metalness: 0.15, roughness: 0.55, side: THREE.DoubleSide }) : defaultMat;
+    group.add(new THREE.Mesh(geo, mat));
+    group.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 25), new THREE.LineBasicMaterial({ color: 0x1b2026, transparent: true, opacity: 0.3 })));
+    triCount += idx.length / 3;
+  }
+  return { group, triCount };
+}
+function importStepIgesFile(file) {
+  const name = file.name, ext = name.toLowerCase().split('.').pop();
+  const isStep = ext === 'step' || ext === 'stp', isIges = ext === 'iges' || ext === 'igs';
+  if (!isStep && !isIges) { toast('STEP 또는 IGES 파일만 가져올 수 있습니다'); return; }
+  const reader = new FileReader();
+  reader.onerror = () => toast('파일을 읽는 중 오류가 발생했습니다');
+  reader.onload = async () => {
+    toast('STEP/IGES 해석 중… (처음 한 번은 엔진 로딩에 시간이 걸립니다)');
+    try {
+      const occt = await getOcct();
+      const bytes = new Uint8Array(reader.result);
+      const result = isStep ? occt.ReadStepFile(bytes, null) : occt.ReadIgesFile(bytes, null);
+      if (!result || !result.success) { toast('파일을 해석하지 못했습니다: 올바른 STEP/IGES 파일인지 확인하세요'); return; }
+      const { group, triCount } = buildMeshFromOcctResult(result);
+      if (!triCount) { toast('파일을 해석했지만 표시할 메시가 없습니다 (빈 모델이거나 지원하지 않는 요소만 포함)'); return; }
+      V3D.mv = null; V3D.rev = null; V3D.selLines = null; V3D.native = null;
+      V3D.imported = { group, name, triCount, kind: 'occt' };
+      V3D.name = name.replace(/\.\w+$/, '');
+      $('#v3dThickWrap').hidden = true; $('#v3dFlipWrap').hidden = true; $('#v3dRevWrap').hidden = true;
+      $('#view3d').hidden = false;
+      if (!V3D.ready) init3DRenderer();
+      startLoop();
+      rebuildImported();
+    } catch (err) {
+      toast('STEP/IGES 파일을 해석하지 못했습니다 (' + (err.message || err) + ')');
+    }
+  };
+  reader.readAsArrayBuffer(file);
 }
 // ---------- 원본 3D 보기: 도면에 저장된 진짜 3D 데이터(3D 면·레거시 폴리페이스 메시·3D 폴리선)를 추정 없이 그대로 표시 ----------
 function openNative3DView() {
@@ -1462,6 +1536,7 @@ $('#errClose').addEventListener('click', () => $('#error').hidden = true);
 
 $('#fileInput').addEventListener('change', e => { const f = e.target.files[0]; if (f) openFile(f); e.target.value = ''; });
 $('#meshFileInput').addEventListener('change', e => { const f = e.target.files[0]; if (f) importMeshFile(f); e.target.value = ''; });
+$('#stepFileInput').addEventListener('change', e => { const f = e.target.files[0]; if (f) importStepIgesFile(f); e.target.value = ''; });
 $$('[data-open]').forEach(b => b.addEventListener('click', () => $('#fileInput').click()));
 let dragN = 0;
 window.addEventListener('dragenter', e => { e.preventDefault(); dragN++; $('#drop').hidden = false; });
@@ -1516,6 +1591,7 @@ function act(name, arg) {
     case 'sel-3d-mv': startMultiViewCapture(); break;
     case 'sel-3d-rev': startRevolveCapture(); break;
     case 'import-mesh': $('#meshFileInput').click(); break;
+    case 'import-step': $('#stepFileInput').click(); break;
     case 'view-native3d': openNative3DView(); break;
     case 'sel-clear': setSel([]); break;
     case 'sel-layer-off': { const r = S.space.ents[[...S.sel][0]]; const l = S.drawing.layers.get(r?.layer); if (l) { l.on = false; computeVis(); renderLayers(); setSel([]); } break; }
@@ -1640,7 +1716,7 @@ renderProps();
   setTimeout(() => prepareSpare().then(() => { S.engine = 'ok'; }, err => { S.engine = String(err && err.message || err); }).finally(renderInfo), 800);
 })();
 const _open = openFile;
-window.__dwgv = { S, openBuffer, redraw, zoomBox, setSel, zoomToEnts, setMode, MV, mvCapture, mvFinish, boxSelect, V3D, rebuildMV, open3DPreview, getWH: () => [W, H], REV, revCapture, rebuildRev, importMeshFile, rebuildImported, openNative3DView, rebuildNative3D };
+window.__dwgv = { S, openBuffer, redraw, zoomBox, setSel, zoomToEnts, setMode, MV, mvCapture, mvFinish, boxSelect, V3D, rebuildMV, open3DPreview, getWH: () => [W, H], REV, revCapture, rebuildRev, importMeshFile, rebuildImported, openNative3DView, rebuildNative3D, importStepIgesFile, getOcct };
 document.addEventListener('dwgv-opened', () => { });
 // ---------- about ----------
 $('#aboutVer').textContent = `버전 ${APP_VERSION}`;

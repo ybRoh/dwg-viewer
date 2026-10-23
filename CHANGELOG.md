@@ -2,6 +2,12 @@
 
 이 프로젝트는 [시맨틱 버전](https://semver.org/lang/ko/)을 따릅니다 (주.부.수 = MAJOR.MINOR.PATCH).
 
+## v1.8.0 — 2026-10-23
+- **"STEP/IGES 가져오기"** 추가(가져오기 그룹, STL/OBJ 옆): OpenCascade(OCCT, LGPL-2.1) WASM 빌드로 STEP·IGES 파일을 브라우저 안에서 직접 해석. STEP/IGES는 ACIS/SAT와 달리 공개 표준 포맷이라 오픈소스 커널로 정식 파싱이 가능합니다 — 외부 변환 없이 B-rep 곡면을 메시로 받아 그대로 표시.
+- 가져온 모델의 통계 패널에 "OpenCascade로 직접 해석" / "외부 도구로 변환됨" 안내를 가져온 포맷에 맞게 구분 표시.
+- OCCT WASM(gzip 압축 후 base64)을 단일 HTML에 함께 내장 — 파일 크기가 약 4.3MB → 8.3MB로 증가.
+- NOTICE.md에 OCCT·occt-import-js(둘 다 LGPL-2.1) 고지 추가.
+
 ## v1.7.0 — 2026-10-22
 - **"3D 뷰어" 탭에 "가져오기" 그룹 추가**: "원본 3D 보기"와 "STL/OBJ 가져오기" 두 기능을 새로 제공.
   - **원본 3D 보기(1안)**: 도면 파일에 실제로 저장된 3D 데이터(3D 면·레거시 폴리페이스 메시·3D 폴리곤 메시·3D 폴리선)를 추정·변환 없이 그대로 읽어 3D로 표시. ACIS 기반 3DSOLID/REGION은 오픈소스로 해석이 불가능해 여전히 지원하지 않지만, SketchUp·3ds Max·구버전 CAD에서 흔히 쓰는 메시/폴리페이스 형식은 원본 그대로 보여줍니다.
